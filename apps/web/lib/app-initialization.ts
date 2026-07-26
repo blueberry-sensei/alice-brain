@@ -4,24 +4,18 @@ import {
 } from "./workspace";
 
 export type AppMode = "normal" | "explore";
-export type PetPresence = "explore-only" | "always";
 export type ThemePreference = "light" | "dark" | "system";
 
 export const APP_INITIALIZATION_DEFAULTS = Object.freeze({
   appMode: "normal" as AppMode,
   workspaceSection: "answer" as WorkspaceSection,
-  petPresence: "always" as PetPresence,
-  petCollapsed: true,
 });
 
 export const APP_INITIALIZATION_STORAGE_KEYS = Object.freeze({
   appMode: "sag:app-mode",
   workspaceSection: "sag:workspace-section",
-  petPresence: "sag:pet-presence",
   legacyWorkspacePanel: "sag:workspace-panel",
   legacyWorkspaceMini: "sag:workspace-mini-mode",
-  legacyPetEnabled: "sag:pet",
-  petCollapsed: "sag:pet-collapsed",
   quickModelSetupDismissed: "sag:onboarding:model-setup-dismissed:v1",
   themeBeforeExplore: "sag:theme-before-workspace-collapse",
 });
@@ -146,49 +140,6 @@ export function persistAppMode(
   if (section) {
     safelyWrite(storage, APP_INITIALIZATION_STORAGE_KEYS.workspaceSection, section);
   }
-}
-
-export function readInitialPetPresence(
-  storage: InitializationStorage | null | undefined,
-): PetPresence {
-  const saved = safelyRead(storage, APP_INITIALIZATION_STORAGE_KEYS.petPresence);
-  if (saved === "always" || saved === "explore-only") return saved;
-  const legacyEnabled = safelyRead(
-    storage,
-    APP_INITIALIZATION_STORAGE_KEYS.legacyPetEnabled,
-  );
-  const presence = legacyEnabled === "off"
-    ? "explore-only"
-    : APP_INITIALIZATION_DEFAULTS.petPresence;
-  safelyWrite(storage, APP_INITIALIZATION_STORAGE_KEYS.petPresence, presence);
-  return presence;
-}
-
-export function persistPetPresence(
-  storage: InitializationStorage | null | undefined,
-  presence: PetPresence,
-) {
-  safelyWrite(storage, APP_INITIALIZATION_STORAGE_KEYS.petPresence, presence);
-}
-
-export function shouldShowPet(mode: AppMode, presence: PetPresence) {
-  return mode === "explore" || presence === "always";
-}
-
-export function readInitialPetCollapsed(
-  storage: InitializationStorage | null | undefined,
-) {
-  const saved = safelyRead(storage, APP_INITIALIZATION_STORAGE_KEYS.petCollapsed);
-  if (saved === "true") return true;
-  if (saved === "false") return false;
-  return APP_INITIALIZATION_DEFAULTS.petCollapsed;
-}
-
-export function persistPetCollapsed(
-  storage: InitializationStorage | null | undefined,
-  collapsed: boolean,
-) {
-  safelyWrite(storage, APP_INITIALIZATION_STORAGE_KEYS.petCollapsed, String(collapsed));
 }
 
 export function shouldShowQuickModelSetup(

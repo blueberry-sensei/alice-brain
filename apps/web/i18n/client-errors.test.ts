@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { serverErrorMessage } from "./client-errors";
 
 describe("serverErrorMessage", () => {
-  it("preserves server details in the Chinese interface", () => {
+  it("passes server details through untouched in the Vietnamese interface", () => {
     expect(serverErrorMessage("not_found", "Không tìm thấy tài liệu", 404, "vi-VN"))
-      .toBe("文档不存在");
+      .toBe("Không tìm thấy tài liệu");
   });
 
   it("preserves server details that already match the English interface", () => {

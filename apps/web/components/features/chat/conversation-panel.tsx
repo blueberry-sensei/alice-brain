@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { toolArgumentsPreview } from "@/lib/agent-run-activity";
 import { api } from "@/lib/api";
 import type { ConversationMessage } from "@/lib/conversation-runtime";
-import { parsePetDraft, PET_DRAFT_EVENT, PET_DRAFT_KEY } from "@/lib/pet-events";
 import { formatTokenCount, relativeTime } from "@/lib/format";
 import type { Citation, Source } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -285,36 +284,6 @@ export function ConversationPanel({
   sendRef.current = (text) => {
     void send(text);
   };
-
-  React.useEffect(() => {
-    if (!active) return;
-    const applyDraft = (value: unknown) => {
-      const payload = parsePetDraft(value);
-      if (!payload) return;
-      if (payload.submit) {
-        requestAnimationFrame(() => sendRef.current(payload.text));
-        return;
-      }
-      setInput(payload.text);
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    };
-    const onPetDraft = (event: Event) => {
-      window.sessionStorage.removeItem(PET_DRAFT_KEY);
-      applyDraft((event as CustomEvent<unknown>).detail);
-    };
-
-    window.addEventListener(PET_DRAFT_EVENT, onPetDraft);
-    try {
-      const pending = window.sessionStorage.getItem(PET_DRAFT_KEY);
-      if (pending) {
-        window.sessionStorage.removeItem(PET_DRAFT_KEY);
-        applyDraft(pending);
-      }
-    } catch {
-      /* ignore */
-    }
-    return () => window.removeEventListener(PET_DRAFT_EVENT, onPetDraft);
-  }, [active, sessionId, setInput]);
 
   const handleTranscriptCitation = React.useCallback(
     (citation: Citation, message: ConversationMessage) => {

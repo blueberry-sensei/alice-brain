@@ -78,7 +78,7 @@ describe("knowledge universe settings contract", () => {
   });
 
   it("keeps user-facing copy aligned in both locales", () => {
-    for (const messages of [zh, en]) {
+    for (const messages of [vi, en]) {
       expect(messages.AppShell.graphSettings).toBeTruthy();
       expect(messages.GraphSettings.drawer.title).toBeTruthy();
       expect(messages.GraphSettings.cards.enabled.title).toBeTruthy();
@@ -89,12 +89,12 @@ describe("knowledge universe settings contract", () => {
       expect(messages.GraphSettings.temporal.prefetch.title).toBeTruthy();
       expect(messages.GraphSettings.entityTypes.title).toBeTruthy();
     }
-    expect(zh.GraphSettings.entityTypes.description)
-      .toContain("实体及其事项连线一起隐藏");
     expect(en.GraphSettings.entityTypes.description)
       .toContain("entities and their event links hide together");
-    expect(JSON.stringify(zh.GraphSettings)).not.toContain("事件包");
-    expect(JSON.stringify(en.GraphSettings).toLowerCase())
-      .not.toContain("event bundle");
+    // "event bundle" là thuật ngữ đã bỏ — không locale nào được dùng lại.
+    for (const messages of [vi, en]) {
+      expect(JSON.stringify(messages.GraphSettings).toLowerCase())
+        .not.toContain("event bundle");
+    }
   });
 });

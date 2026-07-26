@@ -11,7 +11,7 @@ import {
   useConversationSession,
 } from "@/components/features/chat/conversation-provider";
 import { ConversationPanel } from "@/components/features/chat/conversation-panel";
-import { PetHeadAvatar } from "@/components/features/pet-head-avatar";
+import { AgentAvatar } from "@/components/features/agent-avatar";
 
 /** 对话主入口；会话数据与迷你问答共享，仅保留完整工作台外壳。 */
 export default function ChatPage() {
@@ -67,11 +67,11 @@ export default function ChatPage() {
 
   const glyph = agent?.avatar || DEFAULT_AGENT_AVATAR;
   const avatarNode = React.useMemo(
-    () => <PetHeadAvatar face={glyph} size="sm" className="mt-0.5" />,
+    () => <AgentAvatar face={glyph} size="sm" className="mt-0.5" />,
     [glyph],
   );
   const heroNode = React.useMemo(
-    () => <PetHeadAvatar face={glyph} size="lg" />,
+    () => <AgentAvatar face={glyph} size="lg" />,
     [glyph],
   );
 

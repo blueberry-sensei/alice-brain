@@ -8,17 +8,14 @@ import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { MAX_AVATAR_CHARS, normalizeAvatar } from "@/lib/avatar";
 import { DEFAULT_AGENT_AVATAR, DEFAULT_AGENT_NAME } from "@/lib/branding";
-import { usePetPresence } from "@/lib/pet-preferences";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/components/features/app-shell";
-import { PetHeadAvatar } from "@/components/features/pet-head-avatar";
-import { PetAppearanceSettings } from "@/components/features/pet-appearance-settings";
+import { AgentAvatar } from "@/components/features/agent-avatar";
 import { SettingsRow, SettingsSection } from "@/components/features/settings-section";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 /** 助手设定 —— 默认 agent 的名字 / 头像 / 开场白 / 系统提示。 */
@@ -35,7 +32,6 @@ export function AgentSettingsCard({ compact = false }: { compact?: boolean }) {
   const [greeting, setGreeting] = React.useState("");
   const [systemPrompt, setSystemPrompt] = React.useState("");
   const [saving, setSaving] = React.useState(false);
-  const [petPresence, setPetPresence] = usePetPresence();
 
   React.useEffect(() => {
     if (!agent) return;
@@ -94,10 +90,7 @@ export function AgentSettingsCard({ compact = false }: { compact?: boolean }) {
             <Field className="min-w-0">
               <FieldLabel htmlFor={avatarId}>{t("avatar")}</FieldLabel>
               <div className="flex items-center gap-2">
-                <PetHeadAvatar
-                  face={avatar || DEFAULT_AGENT_AVATAR}
-                  size="md"
-                />
+                <AgentAvatar face={avatar || DEFAULT_AGENT_AVATAR} size="md" />
                 <Input
                   id={avatarId}
                   value={avatar}
@@ -113,21 +106,6 @@ export function AgentSettingsCard({ compact = false }: { compact?: boolean }) {
               <Input id={nameId} value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
           </div>
-        </SettingsRow>
-        <SettingsRow
-          title={t("petAlwaysOn")}
-          description={t("petAlwaysOnDescription")}
-          layout={compact ? "stacked" : "inline"}
-          contentClassName={compact ? "flex justify-end" : "self-end sm:self-auto"}
-        >
-          <Switch
-            type="button"
-            checked={petPresence === "always"}
-            onCheckedChange={(checked) =>
-              setPetPresence(checked ? "always" : "explore-only")
-            }
-            aria-label={t("petAlwaysOn")}
-          />
         </SettingsRow>
         <SettingsRow title={t("greeting")} description={t("greetingDescription")}>
           <Field>
@@ -155,10 +133,6 @@ export function AgentSettingsCard({ compact = false }: { compact?: boolean }) {
         </SettingsRow>
         </SettingsSection>
       </form>
-      <PetAppearanceSettings
-        agentFace={avatar || DEFAULT_AGENT_AVATAR}
-        compact={compact}
-      />
     </div>
   );
 }

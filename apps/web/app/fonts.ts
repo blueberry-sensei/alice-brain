@@ -1,17 +1,20 @@
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Be_Vietnam_Pro, JetBrains_Mono } from "next/font/google";
 
-// 正文与标题统一无衬线（Notion/Codex 风）；标题用紧字距 .font-display 区分
-export const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
+// Thân bài và tiêu đề dùng chung một họ sans. Be Vietnam Pro được thiết kế riêng
+// cho tiếng Việt nên dấu thanh cân, không chồng lên dấu mũ như phần lớn font Latin.
+// Tiêu đề phân biệt bằng chữ đậm + giãn chữ hẹp qua .font-display.
+export const sans = Be_Vietnam_Pro({
+  subsets: ["latin", "latin-ext", "vietnamese"],
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-sans-family",
   display: "swap",
 });
 
-// 代码 / 数据
+// Mã nguồn / dữ liệu
 export const jbmono = JetBrains_Mono({
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext", "vietnamese"],
   variable: "--font-jbmono",
   display: "swap",
 });
 
-export const fontVars = `${inter.variable} ${jbmono.variable}`;
+export const fontVars = `${sans.variable} ${jbmono.variable}`;

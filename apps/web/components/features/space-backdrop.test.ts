@@ -99,7 +99,8 @@ describe("space backdrop interaction isolation", () => {
     expect(css).toContain(
       '.sag-knowledge-universe[data-universe-mode="explore"][data-universe-view="overview"]',
     );
-    expect(css).toContain("hsl(45 100% 88% / 0.92)");
+    // Đuôi sao băng phải nằm trong tông azure của hệ màu, không phải champagne.
+    expect(css).toContain("hsl(199 100% 90% / 0.92)");
   });
 
   it("gates the cursor meteor for drags and source-detail exploration", () => {

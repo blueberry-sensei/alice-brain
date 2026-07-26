@@ -23,10 +23,9 @@ import {
   type AppMode,
   type ThemePreference,
 } from "@/lib/app-initialization";
-import { DEFAULT_AGENT_AVATAR, DEFAULT_AGENT_NAME } from "@/lib/branding";
+import { DEFAULT_AGENT_AVATAR } from "@/lib/branding";
 import type { ConversationTransport } from "@/lib/conversation-runtime";
 import { DEFAULT_TIME_ZONE } from "@/lib/format";
-import { PetAgent } from "@/lib/pet-agent";
 import {
   DEFAULT_SEARCH_STRATEGY,
   isSearchStrategy,
@@ -72,8 +71,7 @@ import {
   useIsLgUp,
 } from "@/components/features/detail-panel";
 import { KnowledgeProvider } from "@/components/features/knowledge-provider";
-import { PetWithPreference } from "@/components/features/pet";
-import { PetHeadAvatar } from "@/components/features/pet-head-avatar";
+import { AgentAvatar } from "@/components/features/agent-avatar";
 import { QuickModelSetupDialog } from "@/components/features/quick-model-setup-dialog";
 import { SearchProvider } from "@/components/features/search/search-provider";
 import { SpaceBackdrop } from "@/components/features/space-backdrop";
@@ -87,7 +85,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 const KnowledgeUniverse = dynamic(
   () =>
@@ -150,8 +147,6 @@ interface AppCtx {
   capabilities: Capabilities | null;
   /** 默认 agent（客户端主对话入口） */
   agent: Agent | null;
-  /** 可编排的桌面角色，与业务 Agent 分离。 */
-  petAgent: PetAgent | null;
   replaceAgent: (agent: Agent) => void;
   threads: Thread[];
   hasMoreThreads: boolean;
@@ -178,7 +173,6 @@ const AppContext = React.createContext<AppCtx>({
   user: null,
   capabilities: null,
   agent: null,
-  petAgent: null,
   replaceAgent: () => {},
   threads: [],
   hasMoreThreads: false,
@@ -205,12 +199,6 @@ export function useApp() {
   return React.useContext(AppContext);
 }
 
-export function usePetAgent() {
-  const petAgent = useApp().petAgent;
-  if (!petAgent) throw new Error("usePetAgent must be used inside AppShell");
-  return petAgent;
-}
-
 function FullLoader() {
   const t = useTranslations("AppShell");
   return (
@@ -221,11 +209,7 @@ function FullLoader() {
         role="status"
         aria-live="polite"
       >
-        <PetHeadAvatar
-          face={DEFAULT_AGENT_AVATAR}
-          size="lg"
-          className="sag-full-loader__avatar"
-        />
+        <AgentAvatar face={DEFAULT_AGENT_AVATAR} size="lg" />
         <span className="text-sm text-muted-foreground">{t("loading")}</span>
       </div>
     </div>
@@ -237,16 +221,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { theme, resolvedTheme, setTheme } = useTheme();
-  const petAgent = React.useMemo(
-    () =>
-      new PetAgent({
-        name: DEFAULT_AGENT_NAME,
-        avatar: DEFAULT_AGENT_AVATAR,
-        serialNumber: 1,
-        size: 1,
-      }),
-    [],
-  );
   const [user, setUser] = React.useState<User | null>(null);
   const [capabilities, setCapabilities] = React.useState<Capabilities | null>(null);
   const [agent, setAgent] = React.useState<Agent | null>(null);
@@ -600,7 +574,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         user,
         capabilities,
         agent,
-        petAgent,
         replaceAgent: setAgent,
         threads,
         hasMoreThreads,
@@ -743,9 +716,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   )}
                 </motion.div>
               </div>
-              <TooltipProvider delayDuration={300}>
-                <PetWithPreference character={petAgent} syncIdentity />
-              </TooltipProvider>
             </DetailPanelProvider>
           </ConversationProvider>
         </KnowledgeProvider>
