@@ -198,6 +198,51 @@ async def get_provider_attempts(
     }
 
 
+#: Schema tối giản cho bước kiểm structured output. Đường trích xuất của engine luôn gửi
+#: `response_format: {"type": "json_schema", ...}` (alicecore `core/ai/base.py`), nên nếu
+#: gateway không nhận nó thì ingest sẽ hỏng — dù chat thường vẫn chạy.
+_PROBE_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "structured_output",
+        "schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+async def _probe(llm: LLMClient, label: str) -> tuple[bool, str]:
+    """Chạy hai bước kiểm mà hệ thống THẬT SỰ dựa vào, báo cáo riêng từng bước.
+
+    Chỉ thử "ping" là chưa đủ: nó xanh với gateway không hỗ trợ structured output, rồi người
+    dùng mới phát hiện lúc ingest. Test phải vỡ ở đúng chỗ hệ thống sẽ vỡ.
+    """
+    try:
+        await llm.complete([{"role": "user", "content": "ping"}])
+    except ApiError as e:
+        return False, f"Chat thất bại · {label} · {e.message}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Chat thất bại · {label} · {e}"
+
+    try:
+        await llm.complete(
+            [{"role": "user", "content": 'Return exactly {"ok": true}'}],
+            response_format=_PROBE_SCHEMA,
+        )
+    except ApiError as e:
+        return False, (f"Chat chạy được nhưng KHÔNG hỗ trợ structured output · {label} · "
+                       f"{e.message} — provider này không dùng để ingest/trích xuất được.")
+    except Exception as e:  # noqa: BLE001
+        return False, (f"Chat chạy được nhưng KHÔNG hỗ trợ structured output · {label} · {e} "
+                       "— provider này không dùng để ingest/trích xuất được.")
+
+    return True, f"Chat + structured output đều chạy · {label}"
+
+
 @router.post("/model-config/test")
 async def test_model_config(
     request: Request,
@@ -217,13 +262,8 @@ async def test_model_config(
         llm = request.app.state.llm
         if not llm.configured:
             return {"ok": False, "message": "Chưa cấu hình provider nào"}
-        try:
-            await llm.complete([{"role": "user", "content": "ping"}])
-        except ApiError as e:
-            return {"ok": False, "message": e.message}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "message": str(e)}
-        return {"ok": True, "message": f"Kết nối được · {settings.llm_provider} / {settings.llm_model}"}
+        ok, message = await _probe(llm, f"{settings.llm_provider} / {settings.llm_model}")
+        return {"ok": ok, "message": message}
 
     entry = body.model_dump()
     if not entry.get("api_key"):
@@ -241,10 +281,5 @@ async def test_model_config(
 
     # Chuỗi chỉ gồm đúng entry đang thử, runner riêng → không làm bẩn cooldown của bản đang chạy.
     probe = LLMClient(settings.model_copy(update={"llm_providers": [entry]}), ChainRunner())
-    try:
-        await probe.complete([{"role": "user", "content": "ping"}])
-    except ApiError as e:
-        return {"ok": False, "message": e.message}
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "message": str(e)}
-    return {"ok": True, "message": f"Kết nối được · {entry['provider']} / {entry['model']}"}
+    ok, message = await _probe(probe, f"{entry['provider']} / {entry['model']}")
+    return {"ok": ok, "message": message}

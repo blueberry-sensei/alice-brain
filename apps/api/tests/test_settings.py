@@ -189,11 +189,15 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
 
                 observed: dict = {}
 
-                async def fake_complete(client, _messages):
+                # Nút Test chạy HAI bước: chat thường, rồi structured output
+                # (`response_format`) — đúng thứ đường trích xuất dùng. Fake phải nhận kwarg
+                # đó, nếu không là test xanh trong khi bước thứ hai chưa từng chạy.
+                async def fake_complete(client, _messages, *, response_format=None):
                     entry = client._settings.llm_chain[0]
                     observed["provider"] = entry["provider"]
                     observed["model"] = entry["model"]
                     observed["key"] = entry["api_key"]
+                    observed.setdefault("formats", []).append(response_format)
                     return "pong"
 
                 monkeypatch.setattr(LLMClient, "complete", fake_complete)
@@ -210,11 +214,13 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                 assert draft.status_code == 200
                 assert draft.json()["ok"] is True
                 assert "gemini-3.5-flash" in draft.json()["message"]
-                assert observed == {
-                    "provider": "gemini",
-                    "model": "gemini-3.5-flash",
-                    "key": "draft-secret",
-                }
+                assert observed["provider"] == "gemini"
+                assert observed["model"] == "gemini-3.5-flash"
+                assert observed["key"] == "draft-secret"
+                # Bước 1 không có schema, bước 2 PHẢI có — bằng chứng Test thật sự thử
+                # structured output chứ không chỉ "ping".
+                assert observed["formats"][0] is None
+                assert observed["formats"][1]["type"] == "json_schema"
                 assert "draft-secret" not in draft.text
                 assert settings.llm_providers == snapshot["llm_providers"]
 

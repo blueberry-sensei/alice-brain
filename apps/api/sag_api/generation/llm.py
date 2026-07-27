@@ -78,6 +78,7 @@ class LLMClient:
         stream: bool,
         tools: list[dict] | None,
         tool_choice: str | dict | None,
+        response_format: dict | None = None,
     ) -> dict[str, Any]:
         spec = get_model_provider(entry.get("provider") or "openai")
         temperature = entry.get("temperature")
@@ -99,6 +100,8 @@ class LLMClient:
             request["tools"] = tools
             if tool_choice is not None:
                 request["tool_choice"] = tool_choice
+        if response_format is not None:
+            request["response_format"] = response_format
         if entry.get("base_url"):
             request["api_base"] = entry["base_url"]
         if entry.get("extra_body"):
@@ -112,13 +115,15 @@ class LLMClient:
         stream: bool = False,
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
+        response_format: dict | None = None,
     ) -> Any:
         """Gọi provider đầu tiên còn khoẻ; 429/hết quota/sai key thì tự chuyển sang provider kế."""
 
         async def call(entry: dict) -> Any:
             return await _litellm_completion(
                 **self._request_for(
-                    entry, messages, stream=stream, tools=tools, tool_choice=tool_choice
+                    entry, messages, stream=stream, tools=tools, tool_choice=tool_choice,
+                    response_format=response_format,
                 )
             )
 
@@ -233,10 +238,18 @@ class LLMClient:
                 except Exception as e:  # noqa: BLE001
                     log.debug("LLM 轮次流关闭失败：%s", e)
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(
+        self, messages: list[Message], *, response_format: dict | None = None
+    ) -> str:
+        """Sinh một lượt, không stream.
+
+        `response_format` để nút Test thử ĐÚNG structured output mà đường trích xuất dùng.
+        Gateway nhận chat thường nhưng từ chối `json_schema` là chuyện có thật; Test không
+        thử thì nó báo xanh rồi ingest mới vỡ — đúng thứ vừa xảy ra.
+        """
         self._ensure_configured()
         try:
-            resp = await self._create_completion(messages)
+            resp = await self._create_completion(messages, response_format=response_format)
             choices = _attr(resp, "choices", []) or []
             if not choices:
                 raise UpstreamError("模型未返回候选答案")
