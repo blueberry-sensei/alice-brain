@@ -11,8 +11,10 @@ import type {
   Capabilities,
   Doc,
   MessagePage,
+  LLMProviderEntryInput,
   ModelConfig,
   ModelConfigPatch,
+  ProviderAttemptsResponse,
   ModelProviderSpec,
   ModelSetupStatus,
   KnowledgeMcpDescriptor,
@@ -34,23 +36,32 @@ import type {
   ExplorationSession,
 } from "./types";
 
-/** 浏览器通过局域网 IP 打开前端时，自动将 API 指向同主机 8000 端口。 */
+declare global {
+  interface Window {
+    /** Cổng API thật, do server nhúng vào HTML lúc CHẠY (xem app/layout.tsx). */
+    __ALICE_API_PORT__?: string;
+  }
+}
+
+/**
+ * Địa chỉ API, ưu tiên giá trị biết được lúc CHẠY.
+ *
+ * `NEXT_PUBLIC_*` bị nội tuyến vào bundle lúc **build**, nên nó không dùng được nữa: một image
+ * web dựng sẵn được nhiều project cùng pull về, mà mỗi project chạy API ở một cổng khác nhau.
+ * Nướng cứng cổng vào image nghĩa là web của project B gọi sang API của project A — lẫn dữ liệu
+ * giữa hai brain, đúng thứ phải tránh.
+ *
+ * Vì vậy server nhúng cổng thật vào HTML mỗi lần render, và ở đây ta ghép với host đang mở
+ * trang. Cách này đúng cho cả `localhost` lẫn khi mở bằng IP LAN, không phải đoán.
+ */
 function resolveApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_BASE;
   if (typeof window !== "undefined") {
     const { protocol, hostname } = window.location;
-    const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
-    if (!isLocalHost) {
-      const pointsToLocal =
-        !configured ||
-        configured.includes("localhost") ||
-        configured.includes("127.0.0.1");
-      if (pointsToLocal) {
-        return `${protocol}//${hostname}:8000`;
-      }
-    }
+    const runtimePort = window.__ALICE_API_PORT__;
+    if (runtimePort) return `${protocol}//${hostname}:${runtimePort}`;
   }
-  return configured || "http://localhost:8000";
+  // Đường dev (`npm run dev`, không qua container): lấy từ .env.local, cuối cùng mới đoán 8000.
+  return process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 }
 
 export const API_BASE = resolveApiBase();
@@ -446,13 +457,19 @@ export const api = {
         body: JSON.stringify(b),
       },
     ),
-  testModelConfig: (b?: ModelConfigPatch) =>
+  /** Thử **một** provider. Không truyền entry = thử provider đầu chuỗi đang chạy. */
+  testModelConfig: (entry?: LLMProviderEntryInput) =>
     request<{ ok: boolean; message: string }>(
       "/api/v1/system/model-config/test",
       {
         method: "POST",
-        body: b ? JSON.stringify(b) : undefined,
+        body: entry ? JSON.stringify(entry) : undefined,
       },
+    ),
+  /** Lịch sử gọi provider + tình trạng từng provider (cooldown / bị tắt vì sao). */
+  providerAttempts: (limit = 50) =>
+    request<ProviderAttemptsResponse>(
+      `/api/v1/system/model-config/attempts?limit=${limit}`,
     ),
 
   // 信源

@@ -275,8 +275,15 @@ async def test_llm_plain_text_stream_closes_upstream_on_cancellation(monkeypatch
     llm = LLMClient(
         Settings(
             _env_file=None,
-            llm_api_key="test-key",
-            llm_model="test-model",
+            llm_providers=[
+                {
+                    "id": "primary",
+                    "provider": "openai",
+                    "model": "test-model",
+                    "api_key": "test-key",
+                    "priority": 10,
+                }
+            ],
             llm_temperature=0,
             llm_max_tokens=128,
             llm_extra_body=None,

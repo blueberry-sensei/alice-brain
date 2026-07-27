@@ -53,6 +53,11 @@ class Settings(BaseSettings):
 
     # ── 存储 ────────────────────────────────────────────────────────────
     data_dir: str = "./.data/engine"  # alicecore data_dir（LanceDB + SQLite）
+    # Log ghi ra file trong thư mục này (ngoài stdout). Trong stack, đây là bind-mount
+    # nên xem được từ host mà không cần `docker compose logs`.
+    log_dir: str = "./.data/logs"
+    log_file_max_mb: int = Field(default=20, ge=1, le=500)
+    log_file_backups: int = Field(default=5, ge=0, le=50)
     upload_dir: str = "./.data/uploads"  # 上传原始文件落盘
     max_upload_mb: int = 25  # 单文件上传上限
     job_concurrency: int = 2  # 后台处理并发
@@ -114,11 +119,21 @@ class Settings(BaseSettings):
     # 未配置时对 qwen 系模型通过 LiteLLM reasoning_effort=none 统一关闭思考。
     llm_extra_body: dict | None = None
 
+    # ── Chuỗi provider theo thứ tự ưu tiên ─────────────────────────────
+    # Đây là **nguồn sự thật duy nhất** cho việc gọi LLM và chỉ được cấu hình qua UI
+    # (Settings → Models, lưu bảng `settings`). Các trường `llm_*` phẳng phía trên chỉ còn là
+    # ảnh chiếu của entry đầu chuỗi, giữ cho những chỗ đọc "đang dùng model nào" khỏi phải sửa.
+    # Rỗng = CHƯA cấu hình → ingest/hỏi đáp từ chối chạy (không có key mặc định, không fallback).
+    llm_providers: list[dict] = Field(default_factory=list)
+
     # ── Embedding（OpenAI-compatible；仅 OpenAI provider 可复用生成配置）───────
     embedding_model: str = "bge-large-en-v1.5"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
     embedding_dimensions: int | None = None
+    # Embedding không đổi nhà khi lỗi (đổi model = đổi không gian vector, index sẽ lẫn hai hệ
+    # toạ độ). Chỉ thử lại trên cùng endpoint; hết lượt là để document FAILED, không ghi thiếu vector.
+    embedding_max_retries: int = Field(default=3, ge=0, le=10)
 
     # ── Parse tài liệu (chuyển sang Markdown trước khi vào alicecore) ────
     # Chỉ còn MarkItDown chạy CỤC BỘ. Nhánh gọi dịch vụ parse của bên thứ ba
@@ -192,9 +207,19 @@ class Settings(BaseSettings):
         return normalized
 
     @property
+    def llm_chain(self) -> list[dict]:
+        """Chuỗi provider đang bật, đã sắp theo ưu tiên (nhỏ = ưu tiên cao)."""
+        enabled = [
+            entry
+            for entry in self.llm_providers
+            if entry.get("enabled", True) and entry.get("api_key") and entry.get("model")
+        ]
+        return sorted(enabled, key=lambda entry: entry.get("priority", 100))
+
+    @property
     def llm_configured(self) -> bool:
         """LLM 是否已配置（决定抽取 / 问答能否真正运行）。"""
-        return bool(self.llm_api_key)
+        return bool(self.llm_chain)
 
     @property
     def routed_llm_model(self) -> str:

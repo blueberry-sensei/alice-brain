@@ -42,6 +42,12 @@ interface QuickModelSetupDialogProps {
   onConfigured: (capabilities: Capabilities) => void;
 }
 
+/**
+ * Model mặc định của quick setup. Giữ khớp với `default_model` của provider `gemini`
+ * trong `core/model_providers.py` — đổi một bên thì phải đổi bên kia.
+ */
+const GEMINI_DEFAULT_MODEL = "gemini-3.5-flash";
+
 const PRESET_ROWS = [
   { icon: Cpu, labelKey: "generationModel", valueKey: "generationValue" },
   { icon: Sparkles, labelKey: "embeddingModel", valueKey: "embeddingValue" },
@@ -86,9 +92,27 @@ export function QuickModelSetupDialog({
     try {
       // Chỉ cần key sinh văn bản: embedding bge-m3 và parser MarkItDown đã chạy
       // cục bộ trong stack, không cần credential nào.
+      // Quick setup dựng **một** provider Gemini làm đầu chuỗi; thêm nhà dự bị thì vào
+      // Settings → Models. Lưu ý: đây là PUT thay toàn bộ chuỗi, nên chỉ dùng cho lần đầu.
       const result = await api.saveModelConfig({
-        llm_provider: "gemini",
-        llm_api_key: key,
+        llm_providers: [
+          {
+            id: "gemini",
+            provider: "gemini",
+            model: GEMINI_DEFAULT_MODEL,
+            label: "",
+            base_url: null,
+            priority: 10,
+            enabled: true,
+            extra_body: null,
+            cooldown_seconds: 60,
+            temperature: null,
+            max_tokens: null,
+            timeout_ms: null,
+            max_retries: null,
+            api_key: key,
+          },
+        ],
       });
       setApiKey("");
       setShowKey(false);

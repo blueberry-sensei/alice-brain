@@ -22,6 +22,7 @@ from sag_api.core.logging import RequestContextMiddleware, configure_logging, ge
 from sag_api.generation import LLMClient
 from sag_api.jobs import InProcessAsyncQueue
 from sag_api.sag import EngineManager
+from sag_api.sag.attempt_bridge import install_engine_attempt_bridge, uninstall_engine_attempt_bridge
 from sag_api.sag.compat import install_engine_extract_compat
 
 log = get_logger("app")
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
     # 共享相同的 provider 参数，而不修改依赖包。
     install_engine_extract_compat()
     litellm_policy = install_litellm_policy(settings)
+    # Engine tự chuyển provider khi trích xuất; hứng log của nó về cùng một chỗ với đường
+    # chat để UI chỉ phải đọc một nguồn khi hỏi "vừa rồi provider nào fail".
+    install_engine_attempt_bridge()
     app.state.engine_manager = EngineManager(settings)
     app.state.llm = LLMClient(settings)
     app.state.agent_runtime = AgentRuntime()
@@ -101,6 +105,7 @@ async def lifespan(app: FastAPI):
             await app.state.engine_manager.aclose_all()
             await dispose_db()
         finally:
+            uninstall_engine_attempt_bridge()
             uninstall_litellm_policy(litellm_policy)
 
 

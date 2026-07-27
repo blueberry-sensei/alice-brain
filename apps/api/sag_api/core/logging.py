@@ -6,6 +6,7 @@ import contextvars
 import logging
 import sys
 import uuid
+from pathlib import Path
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -15,6 +16,43 @@ _CONFIGURED = False
 
 # 当前请求的追踪 id，供日志与错误处理引用
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+def _file_handler() -> logging.Handler | None:
+    """Handler ghi log ra file, xoay vòng theo dung lượng.
+
+    Log của `alicecore` cũng vào đây: logger của engine propagate lên root, nên một handler
+    ở root là đủ để có cả API và engine trong **một** file — khi lỗi thì chỉ cần đọc một chỗ.
+
+    Không tạo được file (chỉ đọc / hết đĩa) thì trả `None`: mất log ra file còn chấp nhận được,
+    chứ không được vì chuyện đó mà app không chạy.
+    """
+    from logging.handlers import RotatingFileHandler
+
+    from sag_api.core.config import settings
+
+    try:
+        directory = Path(settings.log_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = RotatingFileHandler(
+            directory / "sag-api.log",
+            maxBytes=settings.log_file_max_mb * 1024 * 1024,
+            backupCount=settings.log_file_backups,
+            encoding="utf-8",
+        )
+    except OSError as error:
+        print(f"[log] Không ghi được log ra file ({error}); chỉ còn stdout", file=sys.stderr)
+        return None
+
+    handler.addFilter(_RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            # File log dùng ngày đầy đủ: đọc lại sau vài ngày mà chỉ có giờ thì vô dụng.
+            fmt="%(asctime)s  %(levelname)-7s  [%(request_id)s]  %(name)s  %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    return handler
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -32,6 +70,9 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers = [handler]
+    file_handler = _file_handler()
+    if file_handler is not None:
+        root.addHandler(file_handler)
     # 降低第三方噪音，并禁止模型客户端在 DEBUG 模式输出完整提示词/正文。
     for noisy in (
         "httpx",

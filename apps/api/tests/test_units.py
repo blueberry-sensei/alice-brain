@@ -44,11 +44,50 @@ def test_model_provider_registry_is_the_public_source_of_truth():
 
 def test_build_engine_config_zero_infra():
     cfg = build_engine_config(settings)
-    assert cfg.vector_provider == "lancedb"  # 默认零依赖向量后端
-    assert cfg.llm.model == settings.routed_llm_model
+    assert cfg.vector_provider == "lancedb"  # backend vector zero-dependency mặc định
     assert cfg.llm.max_tokens == settings.llm_max_tokens
     assert cfg.llm.provider == "litellm"
     assert cfg.data_dir == settings.data_dir
+    # Chưa cấu hình provider: engine vẫn dựng được (đường offline để start() tạo schema),
+    # nhưng chuỗi chỉ có placeholder — service layer chặn ingest/search trước khi tới đây.
+    assert cfg.llm.providers == [] and cfg.llm.api_key == "not-configured"
+
+
+def test_build_engine_config_passes_whole_chain():
+    """Engine phải nhận CẢ chuỗi: hết quota giữa lúc extract thì nó tự đổi nhà."""
+    configured = Settings(
+        _env_file=None,
+        llm_providers=[
+            {
+                "id": "openrouter",
+                "provider": "openai",
+                "model": "deepseek/deepseek-v4-flash",
+                "api_key": "sk-or",
+                "base_url": "https://openrouter.ai/api/v1",
+                "priority": 10,
+                "extra_body": {"provider": {"order": ["deepinfra/fp4"]}},
+            },
+            {
+                "id": "gemini",
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
+                "api_key": "AIza",
+                "priority": 20,
+            },
+        ],
+    )
+
+    cfg = build_engine_config(configured)
+    chain = cfg.llm.resolved_chain()
+
+    assert [entry.id for entry in chain] == ["openrouter", "gemini"]
+    # route_model thêm tiền tố litellm đúng theo provider của từng entry.
+    assert [entry.model for entry in chain] == [
+        "openai/deepseek/deepseek-v4-flash",
+        "gemini/gemini-3.5-flash",
+    ]
+    assert chain[0].extra_body == {"provider": {"order": ["deepinfra/fp4"]}}
+    assert all(entry.provider == "litellm" for entry in chain)
 
 
 @pytest.mark.parametrize(
@@ -62,16 +101,21 @@ def test_build_engine_config_zero_infra():
 def test_extraction_engine_uses_one_litellm_transport(provider, model, expected_model):
     configured = Settings(
         _env_file=None,
-        llm_provider=provider,
-        llm_base_url=None,
-        llm_api_key="provider-key",
-        llm_model=model,
+        llm_providers=[
+            {
+                "id": "primary",
+                "provider": provider,
+                "model": model,
+                "api_key": "provider-key",
+                "priority": 10,
+            }
+        ],
     )
 
     engine = build_engine_config(configured)
 
     assert engine.llm.provider == "litellm"
-    assert engine.llm.model == expected_model
+    assert engine.llm.resolved_chain()[0].model == expected_model
 
 
 @pytest.mark.parametrize(
@@ -178,7 +222,15 @@ async def test_llm_timeout_and_retries_reach_unified_client(monkeypatch):
     monkeypatch.setattr(generation_llm, "_litellm_completion", fake_completion)
     configured = Settings(
         _env_file=None,
-        llm_api_key="provider-key",
+        llm_providers=[
+            {
+                "id": "primary",
+                "provider": "openai",
+                "model": "qwen3.6-flash",
+                "api_key": "provider-key",
+                "priority": 10,
+            }
+        ],
         llm_timeout_ms=45_000,
         llm_max_retries=3,
     )
@@ -187,14 +239,17 @@ async def test_llm_timeout_and_retries_reach_unified_client(monkeypatch):
     assert await client.complete([{"role": "user", "content": "ping"}]) == "pong"
     assert seen["model"] == "openai/qwen3.6-flash"
     assert seen["timeout"] == 45
-    assert seen["num_retries"] == 3
+    # num_retries=0 là CHỦ Ý: retry do ChainRunner làm để mỗi lần thử đều vào
+    # ATTEMPT_LOG. Nếu để LiteLLM tự retry thì các lần thử đó im lặng.
+    assert seen["num_retries"] == 0
     assert seen["reasoning_effort"] == "none"
     assert "reasoning_effort" in seen["allowed_openai_params"]
     assert "extra_body" not in seen
 
     engine = build_engine_config(configured)
     assert engine.llm.provider == "litellm"
-    assert engine.llm.model == "openai/qwen3.6-flash"
+    # Model nằm ở từng entry của chuỗi, không còn ở field phẳng.
+    assert engine.llm.resolved_chain()[0].model == "openai/qwen3.6-flash"
     assert engine.llm.timeout == 45
     assert engine.llm.max_retries == 3
 
@@ -220,10 +275,15 @@ async def test_generation_providers_use_one_litellm_route(monkeypatch, provider,
     monkeypatch.setattr(generation_llm, "_litellm_completion", fake_completion)
     configured = Settings(
         _env_file=None,
-        llm_provider=provider,
-        llm_base_url=None,
-        llm_api_key="provider-key",
-        llm_model=model,
+        llm_providers=[
+            {
+                "id": "primary",
+                "provider": provider,
+                "model": model,
+                "api_key": "provider-key",
+                "priority": 10,
+            }
+        ],
         llm_timeout_ms=45_000,
         llm_max_retries=3,
     )
@@ -234,7 +294,9 @@ async def test_generation_providers_use_one_litellm_route(monkeypatch, provider,
     assert seen["api_key"] == "provider-key"
     assert seen["temperature"] == expected_temperature
     assert seen["timeout"] == 45
-    assert seen["num_retries"] == 3
+    # num_retries=0 là CHỦ Ý: retry do ChainRunner làm để mỗi lần thử đều vào
+    # ATTEMPT_LOG. Nếu để LiteLLM tự retry thì các lần thử đó im lặng.
+    assert seen["num_retries"] == 0
     assert "api_base" not in seen
 
 
@@ -294,10 +356,15 @@ async def test_native_provider_stream_keeps_text_usage_and_tool_calls(monkeypatc
     client = generation_llm.LLMClient(
         Settings(
             _env_file=None,
-            llm_provider="gemini",
-            llm_base_url=None,
-            llm_api_key="gemini-key",
-            llm_model="gemini-3.5-flash",
+            llm_providers=[
+                {
+                    "id": "primary",
+                    "provider": "gemini",
+                    "model": "gemini-3.5-flash",
+                    "api_key": "gemini-key",
+                    "priority": 10,
+                }
+            ],
         )
     )
     request = ModelRequest(
@@ -330,16 +397,26 @@ async def test_native_provider_stream_keeps_text_usage_and_tool_calls(monkeypatc
 def test_native_generation_key_is_not_reused_for_openai_embeddings():
     configured = Settings(
         _env_file=None,
+        llm_providers=[
+            {
+                "id": "primary",
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "api_key": "anthropic-secret",
+                "priority": 10,
+            }
+        ],
+        # Provider native (Anthropic/Gemini) không dùng chung định dạng embedding,
+        # nên credential sinh văn bản KHÔNG được mượn cho embedding.
         llm_provider="anthropic",
         llm_api_key="anthropic-secret",
-        llm_model="claude-sonnet-5",
         embedding_api_key=None,
     )
 
     assert configured.effective_embedding_api_key is None
     engine = build_engine_config(configured)
     assert engine.llm.provider == "litellm"
-    assert engine.llm.model == "anthropic/claude-sonnet-5"
+    assert engine.llm.resolved_chain()[0].model == "anthropic/claude-sonnet-5"
     assert engine.llm.temperature == 1.0
     assert engine.embedding.api_key == "not-configured"
 
@@ -555,3 +632,80 @@ def test_agent_name_is_injected_into_prompt():
     assert "你的名字是「小跃」" in system
     assert "保持严谨。" in system
     assert "sag" not in system.lower()
+
+
+@pytest.mark.asyncio
+async def test_chain_runner_retries_transient_and_records_every_attempt(monkeypatch):
+    """Tắt retry của LiteLLM không làm mất retry — ChainRunner làm, và ghi lại từng lần."""
+    from sag_api.core import llm_routing
+    from sag_api.generation import llm as generation_llm
+
+    calls = {"n": 0}
+
+    async def flaky_completion(**_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Error code: 503 - upstream unavailable")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="pong"))])
+
+    monkeypatch.setattr(generation_llm, "_litellm_completion", flaky_completion)
+    llm_routing.clear_attempts()
+    configured = Settings(
+        _env_file=None,
+        llm_providers=[
+            {
+                "id": "primary",
+                "provider": "openai",
+                "model": "qwen3.6-flash",
+                "api_key": "provider-key",
+                "priority": 10,
+                "max_retries": 2,
+            }
+        ],
+    )
+    client = generation_llm.LLMClient(
+        configured, llm_routing.ChainRunner(retry_delay=0.001, max_delay=0.002)
+    )
+
+    assert await client.complete([{"role": "user", "content": "ping"}]) == "pong"
+    assert calls["n"] == 2  # lỗi 5xx -> thử lại cùng provider
+
+    recorded = llm_routing.recent_attempts(10)
+    assert [entry["action"] for entry in recorded] == ["ok", "retry"]  # mới nhất lên đầu
+    assert recorded[1]["kind"] == "transient"
+    assert "503" in recorded[1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_chain_runner_switches_provider_on_rate_limit(monkeypatch):
+    """429 ở nhà đầu -> nhà thứ hai trả lời, và lý do đổi nhà nằm trong log."""
+    from sag_api.core import llm_routing
+    from sag_api.generation import llm as generation_llm
+
+    seen_keys: list[str] = []
+
+    async def quota_then_ok(**kwargs):
+        seen_keys.append(kwargs["api_key"])
+        if kwargs["api_key"] == "first-key":
+            raise RuntimeError("Error code: 429 - quota exceeded")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="pong"))])
+
+    monkeypatch.setattr(generation_llm, "_litellm_completion", quota_then_ok)
+    llm_routing.clear_attempts()
+    configured = Settings(
+        _env_file=None,
+        llm_providers=[
+            {"id": "first", "provider": "openai", "model": "m1", "api_key": "first-key", "priority": 10},
+            {"id": "second", "provider": "openai", "model": "m2", "api_key": "second-key", "priority": 20},
+        ],
+    )
+    client = generation_llm.LLMClient(
+        configured, llm_routing.ChainRunner(retry_delay=0.001, max_delay=0.002)
+    )
+
+    assert await client.complete([{"role": "user", "content": "ping"}]) == "pong"
+    assert seen_keys == ["first-key", "second-key"]  # không thử lại nhà đã hết quota
+
+    recorded = llm_routing.recent_attempts(10)
+    assert recorded[-1]["kind"] == "rate_limit" and recorded[-1]["action"] == "failover"
+    assert recorded[0]["ok"] is True and recorded[0]["provider_id"] == "second"

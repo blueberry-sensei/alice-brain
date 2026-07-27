@@ -10,6 +10,7 @@ import pytest
 from sag_api.core.config import Settings, settings
 
 _RESTORE = (
+    "llm_providers",
     "llm_provider",
     "llm_base_url",
     "llm_model",
@@ -156,10 +157,11 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                 )
                 assert invalid_timezone.status_code == 422
 
-                # GET：密钥脱敏为 *_set，离线下未配置
+                # GET: chưa có provider nào -> chuỗi rỗng, LLM coi như chưa cấu hình.
                 body = (await c.get("/api/v1/system/model-config", headers=A)).json()
-                assert "llm_api_key" not in body and body["llm_api_key_set"] is False
-                assert body["llm_provider"] == "openai"
+                assert body["llm_providers"] == []
+                assert body["llm_configured"] is False
+                assert "llm_api_key" not in body
                 assert "mineru_api_key" not in body and "mineru_api_key_set" not in body
                 assert body["effective_document_parser"] == "markitdown"
                 assert body["document_extract_concurrency"] == 5
@@ -175,22 +177,23 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                     "anthropic",
                     "gemini",
                 ]
-                assert providers[0]["default_model"] == body["llm_model"]
                 assert "litellm_prefix" not in providers[0]
 
                 # 连接测试（未配置）→ 立即 ok False，无网络
                 t = (await c.post("/api/v1/system/model-config/test", headers=A)).json()
                 assert t["ok"] is False and "message" in t
 
-                # 测试表单草稿：应使用未保存的 provider / key，但不写入全局配置。
+                # Thử một entry đang soạn: phải dùng đúng key/model chưa lưu, và **không**
+                # được ghi gì vào cấu hình đang chạy.
                 from sag_api.generation.llm import LLMClient
 
                 observed: dict = {}
 
                 async def fake_complete(client, _messages):
-                    observed["provider"] = client._settings.llm_provider
-                    observed["model"] = client._settings.llm_model
-                    observed["key"] = client._settings.llm_api_key
+                    entry = client._settings.llm_chain[0]
+                    observed["provider"] = entry["provider"]
+                    observed["model"] = entry["model"]
+                    observed["key"] = entry["api_key"]
                     return "pong"
 
                 monkeypatch.setattr(LLMClient, "complete", fake_complete)
@@ -198,33 +201,44 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                     "/api/v1/system/model-config/test",
                     headers=A,
                     json={
-                        "llm_provider": "gemini",
-                        "llm_base_url": None,
-                        "llm_api_key": "draft-secret",
-                        "llm_model": "gemini-3.5-flash",
+                        "id": "draft-gemini",
+                        "provider": "gemini",
+                        "model": "gemini-3.5-flash",
+                        "api_key": "draft-secret",
                     },
                 )
                 assert draft.status_code == 200
-                assert draft.json() == {
-                    "ok": True,
-                    "message": "连接成功 · gemini / gemini-3.5-flash",
-                }
+                assert draft.json()["ok"] is True
+                assert "gemini-3.5-flash" in draft.json()["message"]
                 assert observed == {
                     "provider": "gemini",
                     "model": "gemini-3.5-flash",
                     "key": "draft-secret",
                 }
                 assert "draft-secret" not in draft.text
-                assert settings.llm_provider == snapshot["llm_provider"]
-                assert settings.llm_api_key == snapshot["llm_api_key"]
+                assert settings.llm_providers == snapshot["llm_providers"]
 
-                # PUT 非密钥字段 → 持久化 + 生效 + capabilities 反映
+                # PUT chuỗi provider → persist + hiệu lực ngay + capabilities phản ánh
                 r = await c.put(
                     "/api/v1/system/model-config",
                     headers=A,
                     json={
-                        "llm_provider": "anthropic",
-                        "llm_model": "test-model-x",
+                        "llm_providers": [
+                            {
+                                "id": "anthropic-main",
+                                "provider": "anthropic",
+                                "model": "test-model-x",
+                                "api_key": "sk-ant-fake",
+                                "priority": 10,
+                            },
+                            {
+                                "id": "gemini-backup",
+                                "provider": "gemini",
+                                "model": "gemini-3.5-flash",
+                                "api_key": "AIza-fake",
+                                "priority": 20,
+                            },
+                        ],
                         "llm_timeout_ms": 45_000,
                         "llm_max_retries": 3,
                         "document_chunk_max_tokens": 1_600,
@@ -234,47 +248,115 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                     },
                 )
                 assert r.status_code == 200, r.text
-                assert r.json()["config"]["llm_model"] == "test-model-x"
-                assert r.json()["config"]["llm_provider"] == "anthropic"
+                config = r.json()["config"]
+                # Entry ưu tiên cao nhất trở thành "đang dùng"; key không bao giờ được trả về.
+                assert [e["id"] for e in config["llm_providers"]] == ["anthropic-main", "gemini-backup"]
+                assert all("api_key" not in e for e in config["llm_providers"])
+                assert all(e["api_key_set"] is True for e in config["llm_providers"])
+                assert config["llm_active_provider"] == "anthropic"
+                assert config["llm_active_model"] == "test-model-x"
+                assert config["llm_configured"] is True
+                assert "sk-ant-fake" not in r.text and "AIza-fake" not in r.text
                 assert r.json()["capabilities"]["llm_provider"] == "anthropic"
                 assert r.json()["capabilities"]["llm_model"] == "test-model-x"
-                assert settings.llm_model == "test-model-x"  # 单例即时生效
+                assert r.json()["capabilities"]["llm_provider_count"] == 2
+                assert settings.llm_model == "test-model-x"  # singleton hiệu lực ngay
                 assert settings.llm_provider == "anthropic"
                 assert settings.llm_timeout_ms == 45_000
                 assert settings.llm_max_retries == 3
                 assert settings.document_chunk_max_tokens == 1_600
                 assert settings.document_chunk_mode == "heading_strict"
                 g = (await c.get("/api/v1/system/model-config", headers=A)).json()
-                assert g["llm_model"] == "test-model-x" and g["search_top_k"] == 5
+                assert g["llm_active_model"] == "test-model-x" and g["search_top_k"] == 5
                 assert g["sag_language"] == "en"
                 assert g["llm_timeout_ms"] == 45_000 and g["llm_max_retries"] == 3
                 assert g["document_chunk_max_tokens"] == 1_600
                 assert g["document_chunk_mode"] == "heading_strict"
 
-                # 密钥：设假 key → set=True 且不回显明文
-                r = await c.put(
-                    "/api/v1/system/model-config",
-                    headers=A,
-                    json={
-                        "llm_base_url": "https://llm.example.test/v1",
-                        "llm_api_key": "sk-fake-xyz",
-                    },
-                )
-                assert r.json()["config"]["llm_base_url"] == "https://llm.example.test/v1"
-                assert r.json()["config"]["llm_api_key_set"] is True
-                assert "sk-fake" not in r.text
+                # Key phải được MÃ HOÁ trong DB, không plaintext.
+                async with SessionLocal() as probe:
+                    from sqlalchemy import select as _select
+
+                    stored = await probe.scalar(
+                        _select(Setting).where(
+                            Setting.scope == "global", Setting.key == "model_config"
+                        )
+                    )
+                assert stored is not None
+                stored_entries = stored.value["llm_providers"]
+                assert all(e["api_key"].startswith("enc:v1:") for e in stored_entries)
+                assert all("sk-ant-fake" not in e["api_key"] for e in stored_entries)
 
                 # Endpoint cau hinh parser cua ben thu ba da bi go han.
                 r = await c.post("/api/v1/system/model-config/mineru/302", headers=A)
                 assert r.status_code == 404
-                # 留空提交 → 保留原 key（仍 set），同时更新其他字段
+
+                # Gửi lại chuỗi với api_key rỗng → GIỮ key cũ, chỉ đổi field khác.
                 r = await c.put(
                     "/api/v1/system/model-config",
                     headers=A,
-                    json={"llm_api_key": "", "llm_model": "m2"},
+                    json={
+                        "llm_providers": [
+                            {
+                                "id": "anthropic-main",
+                                "provider": "anthropic",
+                                "model": "m2",
+                                "api_key": "",
+                                "priority": 10,
+                            },
+                        ],
+                    },
                 )
-                assert r.json()["config"]["llm_api_key_set"] is True
-                assert r.json()["config"]["llm_model"] == "m2"
+                kept = r.json()["config"]["llm_providers"]
+                assert len(kept) == 1  # entry không gửi lên là bị xoá thật
+                assert kept[0]["api_key_set"] is True and kept[0]["model"] == "m2"
+                assert settings.llm_model == "m2"
+
+                # Test không nhập key → tái dùng key đã lưu, nhưng CHỈ khi vẫn đúng endpoint cũ.
+                observed.clear()
+                reuse = await c.post(
+                    "/api/v1/system/model-config/test",
+                    headers=A,
+                    json={"id": "anthropic-main", "provider": "anthropic", "model": "m2"},
+                )
+                assert reuse.json()["ok"] is True
+                assert observed["key"] == "sk-ant-fake"
+
+                # Đổi base_url sang host lạ → TỪ CHỐI đưa key đã lưu (chống rút key ra ngoài).
+                observed.clear()
+                redirected = await c.post(
+                    "/api/v1/system/model-config/test",
+                    headers=A,
+                    json={
+                        "id": "anthropic-main",
+                        "provider": "anthropic",
+                        "model": "m2",
+                        "base_url": "https://attacker.example/v1",
+                    },
+                )
+                assert redirected.json()["ok"] is False
+                assert observed == {}
+                assert "sk-ant-fake" not in redirected.text
+
+                # Đổi luôn provider cũng không được mượn key.
+                observed.clear()
+                swapped = await c.post(
+                    "/api/v1/system/model-config/test",
+                    headers=A,
+                    json={"id": "anthropic-main", "provider": "openai", "model": "m2"},
+                )
+                assert swapped.json()["ok"] is False
+                assert observed == {}
+
+                # Chuỗi rỗng → chưa cấu hình, và credential phẳng bị xoá sạch
+                # (đây là thứ vô hiệu hoá key cũ còn sót trong .env).
+                r = await c.put("/api/v1/system/model-config", headers=A, json={"llm_providers": []})
+                assert r.json()["config"]["llm_configured"] is False
+                assert r.json()["capabilities"]["llm_configured"] is False
+                assert settings.llm_api_key is None
+                assert (
+                    await c.post("/api/v1/system/model-config/test", headers=A)
+                ).json()["ok"] is False
 
                 # 文档解析配置与密钥同样支持持久化、脱敏和即时生效。
                 r = await c.put(
@@ -300,9 +382,24 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                 assert (
                     await c.put("/api/v1/system/model-config", headers=A, json={"search_strategy": "nope"})
                 ).status_code == 422
-                assert (
-                    await c.put("/api/v1/system/model-config", headers=A, json={"llm_provider": "nope"})
-                ).status_code == 422
+                # Provider lạ / id trùng / thiếu model -> 422 ngay ở schema.
+                for invalid_chain in (
+                    [{"id": "x", "provider": "nope", "model": "m", "api_key": "k"}],
+                    [
+                        {"id": "dup", "provider": "openai", "model": "m", "api_key": "k"},
+                        {"id": "dup", "provider": "gemini", "model": "m2", "api_key": "k2"},
+                    ],
+                    [{"id": "x", "provider": "openai", "model": "", "api_key": "k"}],
+                    [{"id": "bad id", "provider": "openai", "model": "m", "api_key": "k"}],
+                    [{"id": "x", "provider": "openai", "model": "m", "priority": 0}],
+                ):
+                    assert (
+                        await c.put(
+                            "/api/v1/system/model-config",
+                            headers=A,
+                            json={"llm_providers": invalid_chain},
+                        )
+                    ).status_code == 422, invalid_chain
                 assert (
                     await c.put("/api/v1/system/model-config", headers=A, json={"search_strategy": "atomic"})
                 ).status_code == 422

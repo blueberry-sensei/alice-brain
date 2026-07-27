@@ -9,12 +9,14 @@ from sag_api.core.config import settings
 from sag_api.core.db import SessionLocal, get_session
 from sag_api.core.deps import get_current_user
 from sag_api.core.errors import ApiError, ConflictError
+from sag_api.core.llm_routing import ChainRunner, recent_attempts
 from sag_api.core.logging import get_logger
 from sag_api.core.model_providers import model_provider_catalog
 from sag_api.db.models import Source, User
 from sag_api.generation import LLMClient
 from sag_api.mcp.server import MCP_TOOL_DETAILS, MCP_TOOL_NAMES
 from sag_api.schemas.system import (
+    LLMProviderEntry,
     ModelConfigUpdate,
     SystemPreferencesUpdate,
 )
@@ -27,8 +29,10 @@ log = get_logger("system")
 def _capabilities() -> dict:
     return {
         "llm_configured": settings.llm_configured,
+        # Provider đang ở đầu chuỗi (nơi mọi lời gọi bắt đầu). Số lượng cho biết còn mấy nhà dự bị.
         "llm_provider": settings.llm_provider,
         "llm_model": settings.llm_model,
+        "llm_provider_count": len(settings.llm_chain),
         "context_window": settings.llm_context_window,
         "embedding_model": settings.embedding_model,
         "document_parser": settings.document_parser,
@@ -158,9 +162,7 @@ async def update_model_config(
 
     # 解析器/检索参数保存无需打断暖引擎；只有引擎配置真的变化才安全重建。
     engine_fields = {
-        "llm_provider",
-        "llm_base_url",
-        "llm_model",
+        "llm_providers",
         "llm_temperature",
         "llm_max_tokens",
         "llm_timeout_ms",
@@ -171,41 +173,78 @@ async def update_model_config(
         "sag_language",
     }
     engine_changed = any(before.get(key) != config.get(key) for key in engine_fields)
-    engine_changed = engine_changed or bool(patch.get("llm_api_key") or patch.get("embedding_api_key"))
+    engine_changed = engine_changed or bool(patch.get("embedding_api_key"))
     if engine_changed:
         await request.app.state.engine_manager.aclose_all()
+        # Provider vừa bị tắt vì sai key đáng được thử lại với key mới → xoá trạng thái cũ.
+        request.app.state.llm.runner.reset()
     return {"config": config, "capabilities": _capabilities()}
+
+
+@router.get("/model-config/attempts")
+async def get_provider_attempts(
+    request: Request,
+    limit: int = 50,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Lịch sử gọi provider gần đây + tình trạng từng provider trong chuỗi.
+
+    Đây là chỗ để thấy **vì sao** một provider bị bỏ qua (429 / sai key / model không có),
+    thay vì chỉ thấy câu trả lời im lặng đến từ nhà khác.
+    """
+    return {
+        "attempts": recent_attempts(max(1, min(limit, 200))),
+        "health": request.app.state.llm.health(),
+    }
 
 
 @router.post("/model-config/test")
 async def test_model_config(
     request: Request,
-    body: ModelConfigUpdate | None = None,
+    body: LLMProviderEntry | None = None,
     _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """连接测试：优先验证表单草稿，不持久化也不修改运行期单例。"""
-    llm: LLMClient
-    active = settings
+    """Thử **một** provider. Không lưu, không chạm vào singleton đang chạy.
+
+    Gửi entry đang soạn trên form để thử trước khi lưu. Nếu `api_key` để trống mà `id` đã có
+    trong DB thì dùng lại key đã lưu — người dùng không phải dán lại key chỉ để bấm Test.
+    Việc tái dùng đó **chỉ xảy ra khi entry vẫn trỏ đúng endpoint đã lưu**: đổi `base_url`
+    hay `provider` là phải nhập lại key, kẻo endpoint này thành đường gửi key ra host lạ.
+    Không truyền body = thử provider đầu chuỗi hiện hành.
+    """
     if body is None:
         llm = request.app.state.llm
-    else:
-        patch = body.model_dump(exclude_unset=True)
-        updates = {
-            key: (None if key in {"llm_base_url"} and value == "" else value)
-            for key, value in patch.items()
-            if not (key == "llm_api_key" and not value)
-        }
-        active = settings.model_copy(update=updates)
-        llm = LLMClient(active)
-    if not llm.configured:
-        return {"ok": False, "message": "尚未配置 API Key"}
-    try:
-        await llm.complete([{"role": "user", "content": "ping"}])
+        if not llm.configured:
+            return {"ok": False, "message": "Chưa cấu hình provider nào"}
+        try:
+            await llm.complete([{"role": "user", "content": "ping"}])
+        except ApiError as e:
+            return {"ok": False, "message": e.message}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": str(e)}
+        return {"ok": True, "message": f"Kết nối được · {settings.llm_provider} / {settings.llm_model}"}
+
+    entry = body.model_dump()
+    if not entry.get("api_key"):
+        entry["api_key"] = await settings_service.stored_provider_key(
+            session,
+            body.id,
+            provider=body.provider,
+            base_url=body.base_url,
+        )
+    if not entry.get("api_key"):
         return {
-            "ok": True,
-            "message": f"连接成功 · {active.llm_provider} / {active.llm_model}",
+            "ok": False,
+            "message": "Chưa có API key dùng được cho provider này (đổi endpoint thì phải nhập lại key)",
         }
+
+    # Chuỗi chỉ gồm đúng entry đang thử, runner riêng → không làm bẩn cooldown của bản đang chạy.
+    probe = LLMClient(settings.model_copy(update={"llm_providers": [entry]}), ChainRunner())
+    try:
+        await probe.complete([{"role": "user", "content": "ping"}])
     except ApiError as e:
         return {"ok": False, "message": e.message}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": str(e)}
+    return {"ok": True, "message": f"Kết nối được · {entry['provider']} / {entry['model']}"}

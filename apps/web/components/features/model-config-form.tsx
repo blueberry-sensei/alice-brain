@@ -1,34 +1,30 @@
 "use client";
 
 import * as React from "react";
-import { Check, Plug, RotateCw, Save, X } from "lucide-react";
+import { Lock, LockOpen, RotateCw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { useApp } from "@/components/features/app-shell";
+import { ProviderAttemptLog } from "@/components/features/provider-attempt-log";
+import { ProviderChainEditor } from "@/components/features/provider-chain-editor";
 import { SettingsRow, SettingsSection } from "@/components/features/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import { api, ApiError } from "@/lib/api";
 import type {
+  LLMProviderEntryInput,
   ModelConfig,
   ModelConfigPatch,
-  ModelProviderId,
   ModelProviderSpec,
+  ProviderAttempt,
+  ProviderHealth,
 } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 export function ModelConfigForm() {
   const t = useTranslations("ModelConfig");
@@ -37,13 +33,10 @@ export function ModelConfigForm() {
   const [providers, setProviders] = React.useState<ModelProviderSpec[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
-  const [testing, setTesting] = React.useState(false);
-  const [testResult, setTestResult] = React.useState<{ ok: boolean; message: string } | null>(null);
 
-  const [llmProvider, setLlmProvider] = React.useState<ModelProviderId>("openai");
-  const [llmBaseUrl, setLlmBaseUrl] = React.useState("");
-  const [llmKey, setLlmKey] = React.useState("");
-  const [llmModel, setLlmModel] = React.useState("");
+  const [entries, setEntries] = React.useState<LLMProviderEntryInput[]>([]);
+  const [health, setHealth] = React.useState<ProviderHealth[]>([]);
+  const [attempts, setAttempts] = React.useState<ProviderAttempt[]>([]);
   const [temperature, setTemperature] = React.useState(0.3);
   const [maxTokens, setMaxTokens] = React.useState(20_000);
   const [timeoutMs, setTimeoutMs] = React.useState(60_000);
@@ -53,14 +46,32 @@ export function ModelConfigForm() {
   const [embBaseUrl, setEmbBaseUrl] = React.useState("");
   const [embKey, setEmbKey] = React.useState("");
   const [embDims, setEmbDims] = React.useState("");
-  const [documentParser, setDocumentParser] =
-    React.useState<ModelConfig["document_parser"]>("markitdown");
+  // Đổi model embedding = đổi không gian vector, index cũ thành rác. Khoá lại theo mặc định,
+  // Bệ hạ phải mở khoá một cách chủ ý mới sửa được — và chỉ khi mở khoá mới gửi field này lên.
+  const [embUnlocked, setEmbUnlocked] = React.useState(false);
 
   const hydrate = React.useCallback((config: ModelConfig) => {
     setCfg(config);
-    setLlmProvider(config.llm_provider);
-    setLlmBaseUrl(config.llm_base_url ?? "");
-    setLlmModel(config.llm_model);
+    // Server không trả key: mỗi entry về với api_key rỗng + cờ cho biết đã có key hay chưa.
+    setEntries(
+      config.llm_providers.map((entry) => ({
+        id: entry.id,
+        provider: entry.provider,
+        model: entry.model,
+        label: entry.label,
+        base_url: entry.base_url,
+        priority: entry.priority,
+        enabled: entry.enabled,
+        extra_body: entry.extra_body,
+        cooldown_seconds: entry.cooldown_seconds,
+        temperature: entry.temperature,
+        max_tokens: entry.max_tokens,
+        timeout_ms: entry.timeout_ms,
+        max_retries: entry.max_retries,
+        api_key: "",
+        api_key_set_hint: entry.api_key_set,
+      })),
+    );
     setTemperature(config.llm_temperature);
     setMaxTokens(config.llm_max_tokens);
     setTimeoutMs(config.llm_timeout_ms ?? 60_000);
@@ -69,9 +80,18 @@ export function ModelConfigForm() {
     setEmbModel(config.embedding_model);
     setEmbBaseUrl(config.embedding_base_url ?? "");
     setEmbDims(config.embedding_dimensions != null ? String(config.embedding_dimensions) : "");
-    setDocumentParser(config.document_parser);
-    setLlmKey("");
     setEmbKey("");
+    setEmbUnlocked(false);
+  }, []);
+
+  const loadRuntime = React.useCallback(async () => {
+    try {
+      const { attempts: recent, health: snapshot } = await api.providerAttempts(30);
+      setAttempts(recent);
+      setHealth(snapshot);
+    } catch {
+      // Lịch sử gọi là thông tin phụ trợ: không có thì thôi, đừng chặn cả trang cấu hình.
+    }
   }, []);
 
   const load = React.useCallback(async () => {
@@ -81,15 +101,13 @@ export function ModelConfigForm() {
         api.getModelConfig(),
         api.getModelProviders(),
       ]);
-      if (!providerCatalog.some((provider) => provider.id === config.llm_provider)) {
-        throw new Error("Configured model provider is missing from the provider catalog");
-      }
       setProviders(providerCatalog);
       hydrate(config);
+      void loadRuntime();
     } catch (error) {
       setLoadError(error instanceof ApiError ? error.message : t("loadFailed"));
     }
-  }, [hydrate, t]);
+  }, [hydrate, loadRuntime, t]);
 
   React.useEffect(() => {
     void load();
@@ -97,85 +115,44 @@ export function ModelConfigForm() {
 
   function currentPatch(): ModelConfigPatch {
     const patch: ModelConfigPatch = {
-      llm_provider: llmProvider,
-      llm_base_url: llmBaseUrl.trim() || null,
-      llm_model: llmModel.trim(),
+      llm_providers: entries.map((entry) => ({
+        ...entry,
+        model: entry.model.trim(),
+        label: entry.label.trim(),
+        base_url: entry.base_url?.trim() ? entry.base_url.trim() : null,
+        api_key: entry.api_key?.trim() || undefined,
+      })),
       llm_temperature: temperature,
       llm_max_tokens: maxTokens,
       llm_timeout_ms: timeoutMs,
       llm_max_retries: maxRetries,
       llm_context_window: ctxWindow,
-      embedding_model: embModel.trim(),
-      embedding_base_url: embBaseUrl.trim(),
-      embedding_dimensions: embDims.trim() ? Number(embDims) : null,
-      document_parser: documentParser,
     };
-    if (llmKey.trim()) patch.llm_api_key = llmKey.trim();
-    if (embKey.trim()) patch.embedding_api_key = embKey.trim();
+    // Còn khoá thì không gửi gì thuộc embedding — tránh việc một state cũ trên client
+    // ghi đè cấu hình đang chạy mà Bệ hạ không hề chạm vào.
+    if (embUnlocked) {
+      patch.embedding_model = embModel.trim();
+      patch.embedding_base_url = embBaseUrl.trim();
+      patch.embedding_dimensions = embDims.trim() ? Number(embDims) : null;
+      if (embKey.trim()) patch.embedding_api_key = embKey.trim();
+    }
     return patch;
   }
 
   async function save() {
     setSaving(true);
-    setTestResult(null);
     try {
       const patch = currentPatch();
       const { config } = await api.saveModelConfig(patch);
       hydrate(config);
       await refreshCapabilities();
+      void loadRuntime();
       toast.success(t("saved"));
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : t("saveFailed"));
     } finally {
       setSaving(false);
     }
-  }
-
-  async function test() {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      setTestResult(await api.testModelConfig(currentPatch()));
-    } catch (error) {
-      setTestResult({
-        ok: false,
-        message: error instanceof ApiError ? error.message : t("testFailed"),
-      });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  function changeProvider(value: string) {
-    const next = providers.find((provider) => provider.id === value);
-    const current = providers.find((provider) => provider.id === llmProvider);
-    if (!next) return;
-    const knownUrls = new Set(
-      providers.map((provider) => provider.default_base_url).filter(Boolean),
-    );
-    const knownModels = new Set(providers.map((provider) => provider.default_model));
-    const knownContextWindows = new Set(
-      providers.map((provider) => provider.default_context_window),
-    );
-    if (!llmBaseUrl.trim() || knownUrls.has(llmBaseUrl.trim())) {
-      setLlmBaseUrl(next.default_base_url ?? "");
-    }
-    if (!llmModel.trim() || knownModels.has(llmModel.trim())) {
-      setLlmModel(next.default_model);
-    }
-    if (knownContextWindows.has(ctxWindow)) {
-      setCtxWindow(next.default_context_window);
-    }
-    if (
-      !next.temperature_configurable ||
-      !current ||
-      !current.temperature_configurable ||
-      temperature === current.default_temperature
-    ) {
-      setTemperature(next.default_temperature);
-    }
-    setLlmProvider(next.id);
-    setTestResult(null);
   }
 
   if (loadError) {
@@ -203,7 +180,6 @@ export function ModelConfigForm() {
         {[
           [t("generationTitle"), t("generationLoading")],
           [t("embeddingTitle"), t("embeddingLoading")],
-          [t("parserTitle"), t("parserLoading")],
         ].map(([title, description]) => (
           <SettingsSection key={title} title={title} description={description}>
             <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">
@@ -216,74 +192,32 @@ export function ModelConfigForm() {
     );
   }
 
-  const providerSpec = providers.find((provider) => provider.id === llmProvider)!;
-
-  const generationKeyPlaceholder =
-    cfg.llm_api_key_set && cfg.llm_provider === llmProvider
-      ? t("keyConfigured")
-      : providerSpec.api_key_placeholder;
+  // Tham số hành vi (temperature / embedding tái dùng credential) áp theo provider đầu chuỗi —
+  // đó là nhà mặc định, và cũng là nhà mà embedding có thể mượn credential.
+  const headEntry = [...entries]
+    .filter((entry) => entry.enabled)
+    .sort((a, b) => a.priority - b.priority)[0];
+  const providerSpec =
+    providers.find((provider) => provider.id === headEntry?.provider) ?? providers[0];
 
   return (
     <div className="flex flex-col gap-6">
       <SettingsSection title={t("generationTitle")} description={t("generationDescription")}>
-        <SettingsRow title={t("connectionTitle")} description={t("connectionDescription")}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="llm-provider">{t("provider")}</FieldLabel>
-              <Select value={llmProvider} onValueChange={changeProvider}>
-                <SelectTrigger id="llm-provider">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id}>
-                      {provider.display_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FieldDescription>{t(`providerDescription.${llmProvider}`)}</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="llm-url">Base URL</FieldLabel>
-              <Input
-                id="llm-url"
-                value={llmBaseUrl}
-                onChange={(event) => setLlmBaseUrl(event.target.value)}
-                placeholder={providerSpec.default_base_url ?? t("officialEndpoint")}
-              />
-              <FieldDescription>{t(`baseUrlDescription.${llmProvider}`)}</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="llm-key">API Key</FieldLabel>
-              <Input
-                id="llm-key"
-                type="password"
-                autoComplete="off"
-                value={llmKey}
-                onChange={(event) => setLlmKey(event.target.value)}
-                placeholder={generationKeyPlaceholder}
-              />
-              <FieldDescription>
-                {cfg.llm_provider !== llmProvider && cfg.llm_api_key_set
-                  ? t("providerChangedKeyDescription")
-                  : t("secretDescription")}
-              </FieldDescription>
-            </Field>
-          </div>
+        <SettingsRow title={t("chainTitle")} description={t("chainDescription")}>
+          <ProviderChainEditor
+            entries={entries}
+            providers={providers}
+            health={health}
+            onChange={setEntries}
+          />
+        </SettingsRow>
+
+        <SettingsRow title={t("attemptsTitle")} description={t("attemptsDescription")}>
+          <ProviderAttemptLog attempts={attempts} onRefresh={() => void loadRuntime()} />
         </SettingsRow>
 
         <SettingsRow title={t("generationParams")} description={t("generationParamsDescription")}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="llm-model">{t("model")}</FieldLabel>
-              <Input
-                id="llm-model"
-                value={llmModel}
-                onChange={(event) => setLlmModel(event.target.value)}
-                placeholder={providerSpec.default_model}
-              />
-            </Field>
             <Field>
               <FieldLabel htmlFor="llm-ctxwin">{t("contextWindow")}</FieldLabel>
               <Input
@@ -388,93 +322,87 @@ export function ModelConfigForm() {
               : "embeddingNativeConnectionDescription",
           )}
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="emb-model">{t("model")}</FieldLabel>
-              <Input
-                id="emb-model"
-                value={embModel}
-                onChange={(event) => setEmbModel(event.target.value)}
-                placeholder="bge-large-zh-v1.5"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="emb-dims">{t("dimensions")}</FieldLabel>
-              <Input
-                id="emb-dims"
-                type="number"
-                min={1}
-                max={8192}
-                value={embDims}
-                onChange={(event) => setEmbDims(event.target.value)}
-                placeholder={t("modelDefault")}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="emb-url">{t("optionalBaseUrl")}</FieldLabel>
-              <Input
-                id="emb-url"
-                value={embBaseUrl}
-                onChange={(event) => setEmbBaseUrl(event.target.value)}
-                placeholder="http://embedding:11434/v1"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="emb-key">{t("optionalApiKey")}</FieldLabel>
-              <Input
-                id="emb-key"
-                type="password"
-                autoComplete="off"
-                value={embKey}
-                onChange={(event) => setEmbKey(event.target.value)}
-                placeholder={
-                  cfg.embedding_api_key_set
-                    ? t("keyConfigured")
-                    : providerSpec.can_reuse_embedding_credentials
-                      ? t("reuseGeneration")
-                      : t("separateEmbeddingKey")
-                }
-              />
-            </Field>
+          <div className="flex flex-col gap-4">
+            <Alert>
+              <AlertTitle>{t("embeddingLockTitle")}</AlertTitle>
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                <span className="min-w-0">{t("embeddingLockWarning")}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEmbUnlocked((unlocked) => !unlocked)}
+                >
+                  {embUnlocked ? <LockOpen /> : <Lock />}
+                  {embUnlocked ? t("embeddingRelock") : t("embeddingUnlock")}
+                </Button>
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="emb-model">{t("model")}</FieldLabel>
+                <Input
+                  id="emb-model"
+                  value={embModel}
+                  disabled={!embUnlocked}
+                  onChange={(event) => setEmbModel(event.target.value)}
+                  placeholder="bge-large-en-v1.5"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="emb-dims">{t("dimensions")}</FieldLabel>
+                <Input
+                  id="emb-dims"
+                  type="number"
+                  min={1}
+                  max={8192}
+                  value={embDims}
+                  disabled={!embUnlocked}
+                  onChange={(event) => setEmbDims(event.target.value)}
+                  placeholder={t("modelDefault")}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="emb-url">{t("optionalBaseUrl")}</FieldLabel>
+                <Input
+                  id="emb-url"
+                  value={embBaseUrl}
+                  disabled={!embUnlocked}
+                  onChange={(event) => setEmbBaseUrl(event.target.value)}
+                  placeholder="http://embedding:11434/v1"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="emb-key">{t("optionalApiKey")}</FieldLabel>
+                <Input
+                  id="emb-key"
+                  type="password"
+                  autoComplete="off"
+                  value={embKey}
+                  disabled={!embUnlocked}
+                  onChange={(event) => setEmbKey(event.target.value)}
+                  placeholder={
+                    cfg.embedding_api_key_set
+                      ? t("keyConfigured")
+                      : providerSpec.can_reuse_embedding_credentials
+                        ? t("reuseGeneration")
+                        : t("separateEmbeddingKey")
+                  }
+                />
+              </Field>
+            </div>
+            {embUnlocked && (
+              <p className="text-destructive text-sm leading-5">{t("embeddingUnlockedHint")}</p>
+            )}
           </div>
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection
-        title={t("parserTitle")}
-        description={t("parserDescription")}
-      >
-        <SettingsRow title={t("parserEngine")}>
-          {/* Chỉ còn MarkItDown chạy cục bộ — không có lựa chọn nào khác nên
-              hiển thị dạng thông tin thay vì dropdown một mục. */}
-          <Field>
-            <FieldLabel htmlFor="document-parser">{t("parserMethod")}</FieldLabel>
-            <Input id="document-parser" value="MarkItDown" readOnly disabled />
-            <FieldDescription>{t("markitdownDescription")}</FieldDescription>
-          </Field>
-        </SettingsRow>
-      </SettingsSection>
-
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-        <div className="min-h-5 min-w-0">
-          {testResult && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 text-sm",
-                testResult.ok ? "text-success" : "text-destructive",
-              )}
-            >
-              {testResult.ok ? <Check className="size-4" /> : <X className="size-4" />}
-              {testResult.message}
-            </span>
-          )}
-        </div>
+        <p className="text-muted-foreground min-w-0 text-sm">{t("saveHint")}</p>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={test} variant="outline" disabled={testing || saving}>
-            {testing ? <Spinner /> : <Plug />}
-            {testing ? t("testing") : t("testGeneration")}
-          </Button>
-          <Button type="button" onClick={save} disabled={saving || testing}>
+          <Button type="button" onClick={save} disabled={saving}>
             {saving ? <Spinner /> : <Save />}
             {saving ? t("saving") : t("save")}
           </Button>

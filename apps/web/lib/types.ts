@@ -149,16 +149,76 @@ export interface ModelProviderSpec {
   api_key_placeholder: string;
 }
 
+/** Một provider trong chuỗi ưu tiên. Server không bao giờ trả `api_key` — chỉ `api_key_set`. */
+export interface LLMProviderEntry {
+  id: string;
+  provider: ModelProviderId;
+  model: string;
+  label: string;
+  base_url: string | null;
+  priority: number;
+  enabled: boolean;
+  extra_body: Record<string, unknown> | null;
+  cooldown_seconds: number;
+  temperature: number | null;
+  max_tokens: number | null;
+  timeout_ms: number | null;
+  max_retries: number | null;
+  api_key_set: boolean;
+  /** Server gắn khi không giải mã được credential (SAG_SECRET_KEY đã đổi). */
+  error?: string;
+}
+
+/** Bản gửi lên server: `api_key` rỗng = giữ key đã lưu của entry cùng `id`. */
+export type LLMProviderEntryInput = Omit<LLMProviderEntry, "api_key_set" | "error"> & {
+  api_key?: string;
+  /**
+   * Chỉ dùng ở client: server đã có key cho entry này. Dùng để đổi placeholder thành
+   * "đã cấu hình" thay vì bắt người dùng đoán. Server bỏ qua field lạ (`extra="ignore"`).
+   */
+  api_key_set_hint?: boolean;
+};
+
+export interface ProviderHealth {
+  provider_id: string;
+  label: string;
+  model: string;
+  priority: number;
+  unhealthy_reason: string | null;
+  cooldown_remaining: number;
+  consecutive_failures: number;
+}
+
+export interface ProviderAttempt {
+  provider_id: string;
+  label: string;
+  model: string;
+  stage: "generation" | "extraction";
+  attempt: number;
+  ok: boolean;
+  action: "ok" | "retry" | "failover" | "abort";
+  latency_ms: number;
+  kind: string | null;
+  error: string | null;
+  at: number;
+}
+
+export interface ProviderAttemptsResponse {
+  attempts: ProviderAttempt[];
+  health: ProviderHealth[];
+}
+
 export interface ModelConfig {
-  llm_provider: ModelProviderId;
-  llm_base_url: string | null;
-  llm_model: string;
+  llm_providers: LLMProviderEntry[];
+  /** Ảnh chiếu của entry đầu chuỗi — chỉ để hiển thị "đang dùng gì". */
+  llm_active_provider: ModelProviderId;
+  llm_active_model: string;
+  llm_configured: boolean;
   llm_context_window: number;
   llm_temperature: number;
   llm_max_tokens: number;
   llm_timeout_ms: number;
   llm_max_retries: number;
-  llm_api_key_set: boolean;
   embedding_model: string;
   embedding_base_url: string | null;
   embedding_dimensions: number | null;
@@ -174,10 +234,8 @@ export interface ModelConfig {
 }
 
 export type ModelConfigPatch = Partial<{
-  llm_provider: ModelConfig["llm_provider"];
-  llm_base_url: string | null;
-  llm_api_key: string;
-  llm_model: string;
+  /** Gửi lên là **thay toàn bộ** chuỗi: entry bị xoá khỏi mảng là bị xoá thật. */
+  llm_providers: LLMProviderEntryInput[];
   llm_context_window: number;
   llm_temperature: number;
   llm_max_tokens: number;
@@ -650,8 +708,11 @@ export interface ExplorationDetail {
 
 export interface Capabilities {
   llm_configured: boolean;
+  /** Provider đang ở đầu chuỗi ưu tiên. */
   llm_provider: ModelProviderId;
   llm_model: string;
+  /** Số provider đang bật trong chuỗi (bao nhiêu nhà dự bị). */
+  llm_provider_count?: number;
   context_window?: number;
   embedding_model: string;
   vector_provider: string;

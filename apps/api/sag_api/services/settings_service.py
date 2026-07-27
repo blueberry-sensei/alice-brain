@@ -1,8 +1,14 @@
-"""运行期模型与知识库配置 —— DB 覆盖层叠加在 env 默认（`settings` 单例）之上。
+"""运行期模型与知识库配置 —— 以 DB 为唯一事实来源，覆盖 `settings` 单例。
 
-单用户本地示范：把「模型与检索」配置存进 `settings` 表（scope=global, key=model_config）。
-启动时与保存后**就地覆盖 `settings` 单例**的相应字段，端点再重建 `LLMClient` / 重置暖引擎，
-使配置改动**无需重启即生效**。api_key 明文入库（本地单用户可接受），读取时脱敏（只返回是否已设）。
+「模型与检索」配置存进 `settings` 表（scope=global, key=model_config）。启动时与保存后
+**就地覆盖 `settings` 单例**，端点再重建 `LLMClient` / 重置暖引擎，使改动**无需重启即生效**。
+
+两条重要约定：
+
+1. **LLM 只能在 UI 配置。** 凭据放在 `llm_providers`（优先级链），环境变量 `SAG_LLM_*` 不再
+   参与——启动时若 DB 里没有链，扁平凭据会被**清空**，免得出现「.env 里还有一把旧 key
+   偷偷生效」这种两个事实来源的局面。
+2. **api_key 加密入库**（AES-GCM，见 `core/crypto.py`），读取时只回 `api_key_set` 布尔。
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sag_api.core.config import Settings
 from sag_api.core.config import settings as _settings
+from sag_api.core.crypto import decrypt_secret, encrypt_secret
 from sag_api.core.errors import ConfigurationError
 from sag_api.core.logging import get_logger
 from sag_api.core.model_providers import get_model_provider
@@ -29,10 +36,7 @@ log = get_logger("settings")
 # 允许运行期覆盖的字段（值已由请求 schema 校验/转型）
 _FIELDS = frozenset(
     {
-        "llm_provider",
-        "llm_base_url",
-        "llm_api_key",
-        "llm_model",
+        "llm_providers",
         "llm_temperature",
         "llm_max_tokens",
         "llm_context_window",
@@ -51,13 +55,12 @@ _FIELDS = frozenset(
         "sag_language",
     }
 )
-_SECRET_FIELDS = frozenset({"llm_api_key", "embedding_api_key"})
-_NULLABLE_FIELDS = frozenset({"llm_base_url", "embedding_base_url", "embedding_dimensions"})
+_SECRET_FIELDS = frozenset({"embedding_api_key"})
+_NULLABLE_FIELDS = frozenset({"embedding_base_url", "embedding_dimensions"})
 
 _OPENAI_COMPATIBLE = get_model_provider("openai")
 
 DEFAULT_PRESET = {
-    "llm_provider": _OPENAI_COMPATIBLE.id,
     "llm_temperature": _OPENAI_COMPATIBLE.default_temperature,
     "llm_max_tokens": 20_000,
     "llm_context_window": _OPENAI_COMPATIBLE.default_context_window,
@@ -92,29 +95,169 @@ def _normalize_overrides(overrides: dict) -> dict:
     return normalized
 
 
+def _provider_entries(overrides: dict) -> list[dict]:
+    raw = overrides.get("llm_providers")
+    return [dict(entry) for entry in raw] if isinstance(raw, list) else []
+
+
+def _encrypt_entries(entries: list[dict], previous: list[dict]) -> list[dict]:
+    """Mã hoá key của từng entry trước khi ghi DB; entry gửi key rỗng thì giữ key cũ theo `id`."""
+    kept = {entry.get("id"): entry.get("api_key") for entry in previous if entry.get("api_key")}
+    prepared: list[dict] = []
+    for entry in entries:
+        item = dict(entry)
+        submitted = (item.get("api_key") or "").strip()
+        if submitted:
+            item["api_key"] = encrypt_secret(submitted, _settings.secret_key)
+        else:
+            # Không gửi key mới → giữ nguyên ciphertext cũ. Đây là điều kiện để UI có thể
+            # sửa nhãn / thứ tự / model mà không phải nhập lại key.
+            existing = kept.get(item.get("id"))
+            if existing:
+                item["api_key"] = existing
+            else:
+                item.pop("api_key", None)
+        prepared.append(item)
+    return prepared
+
+
+def _decrypt_entries(entries: list[dict]) -> list[dict]:
+    """Giải mã key để dùng lúc chạy; entry nào không giải được thì **tắt** và nêu lý do."""
+    resolved: list[dict] = []
+    for entry in entries:
+        item = dict(entry)
+        stored = item.get("api_key") or ""
+        if stored:
+            plain = decrypt_secret(stored, _settings.secret_key)
+            if plain is None:
+                log.error(
+                    "Provider %s: không giải mã được API key → tạm tắt, cần nhập lại trên UI",
+                    item.get("id"),
+                )
+                item["enabled"] = False
+                item["api_key"] = ""
+                item["error"] = "credential_undecryptable"
+            else:
+                item["api_key"] = plain
+        resolved.append(item)
+    return resolved
+
+
+def _masked_entries(entries: list[dict]) -> list[dict]:
+    """Bản cho client: không bao giờ trả key (kể cả ciphertext), chỉ trả đã đặt hay chưa."""
+    masked: list[dict] = []
+    for entry in entries:
+        item = {key: value for key, value in entry.items() if key != "api_key"}
+        item["api_key_set"] = bool(entry.get("api_key"))
+        masked.append(item)
+    return masked
+
+
+def _sync_flat_head(settings: Settings, entries: list[dict]) -> None:
+    """Đồng bộ entry ưu tiên cao nhất vào các trường `llm_*` phẳng.
+
+    Nhiều nơi trong ứng dụng chỉ cần biết "đang dùng model nào" (capabilities, litellm policy,
+    embedding tái dùng credential). Cho chúng đọc ảnh chiếu của đầu chuỗi thay vì bắt mọi chỗ
+    hiểu khái niệm chuỗi. Chuỗi rỗng → **xoá sạch** credential phẳng để env không thể lén tác dụng.
+    """
+    chain = sorted(
+        (e for e in entries if e.get("enabled", True) and e.get("api_key") and e.get("model")),
+        key=lambda e: e.get("priority", 100),
+    )
+    if not chain:
+        settings.llm_api_key = None
+        settings.llm_model = ""
+        settings.llm_base_url = None
+        return
+    head = chain[0]
+    settings.llm_provider = head.get("provider") or _OPENAI_COMPATIBLE.id
+    settings.llm_api_key = head.get("api_key")
+    settings.llm_model = head.get("model") or ""
+    settings.llm_base_url = head.get("base_url") or None
+    if head.get("extra_body"):
+        settings.llm_extra_body = dict(head["extra_body"])
+
+
 async def load_overrides(session: AsyncSession) -> dict:
     row = await _load_row(session)
     raw = dict(row.value) if row and isinstance(row.value, dict) else {}
     return _normalize_overrides(raw)
 
 
-async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
-    """判断是否需要首次模型配置，不受运行期 DB 覆盖后的 settings 单例干扰。"""
+def _same_endpoint(left: str | None, right: str | None) -> bool:
+    """Hai base_url có trỏ về cùng một nơi không (bỏ qua khác biệt vô nghĩa)."""
+    return (left or "").strip().rstrip("/").casefold() == (right or "").strip().rstrip("/").casefold()
+
+
+async def stored_provider_key(
+    session: AsyncSession,
+    provider_id: str,
+    *,
+    provider: str,
+    base_url: str | None,
+) -> str | None:
+    """Key (đã giải mã) của một provider đã lưu — dùng cho nút Test khi form không nhập lại key.
+
+    Chỉ trả key khi entry đang thử **vẫn trỏ đúng chỗ cũ** (cùng provider, cùng base_url).
+    Nếu không có ràng buộc này thì bất cứ ai gọi được API cũng bảo server gửi key đã lưu
+    tới một host tuỳ ý — biến "API không bao giờ trả key ra" thành lời hứa suông.
+    """
     row = await _load_row(session)
-    environment_configured = Settings().llm_configured
-    database_configured = bool(row and isinstance(row.value, dict) and row.value.get("llm_api_key"))
+    stored = dict(row.value) if row and isinstance(row.value, dict) else {}
+    for entry in _provider_entries(stored):
+        if entry.get("id") != provider_id or not entry.get("api_key"):
+            continue
+        if entry.get("provider") != provider or not _same_endpoint(entry.get("base_url"), base_url):
+            log.warning(
+                "Từ chối tái dùng key của provider %s: endpoint gửi lên khác endpoint đã lưu",
+                provider_id,
+            )
+            return None
+        return decrypt_secret(str(entry["api_key"]), _settings.secret_key)
+    return None
+
+
+async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
+    """判断是否需要首次模型配置。
+
+    只看 DB：LLM 只能在 UI 配置，环境变量不再是一条有效路径，所以「已配置」= 库里有
+    至少一个启用且带 key 的 provider。
+    """
+    row = await _load_row(session)
+    stored = dict(row.value) if row and isinstance(row.value, dict) else {}
+    entries = _provider_entries(stored)
+    database_configured = any(
+        entry.get("enabled", True) and entry.get("api_key") and entry.get("model") for entry in entries
+    )
     return {
-        "required": not environment_configured and not database_configured,
-        "environment_configured": environment_configured,
+        "required": not database_configured,
+        "environment_configured": False,
         "database_configured": database_configured,
     }
 
 
 def apply_overrides(settings: Settings, overrides: dict) -> None:
-    """把存储的覆盖值就地写回 settings 单例（请求 schema 已保证类型合法）。"""
-    for key, value in _normalize_overrides(overrides).items():
-        if key in _FIELDS:
-            setattr(settings, key, value)
+    """把存储的覆盖值就地写回 settings 单例（请求 schema 已保证类型合法）。
+
+    `llm_providers` 会被解密后写入（运行期需要明文），并同步出扁平的 `llm_*` 头部字段。
+    """
+    normalized = _normalize_overrides(overrides)
+    for key, value in normalized.items():
+        if key not in _FIELDS or key == "llm_providers":
+            continue
+        if key in _SECRET_FIELDS and isinstance(value, str) and value:
+            plain = decrypt_secret(value, settings.secret_key)
+            if plain is None:
+                log.error("Không giải mã được %s → coi như chưa đặt", key)
+                setattr(settings, key, None)
+                continue
+            setattr(settings, key, plain)
+            continue
+        setattr(settings, key, value)
+
+    entries = _decrypt_entries(_provider_entries(normalized))
+    settings.llm_providers = entries
+    _sync_flat_head(settings, entries)
 
 
 async def apply_startup_overrides(session_factory: async_sessionmaker) -> None:
@@ -145,15 +288,16 @@ async def apply_startup_overrides(session_factory: async_sessionmaker) -> None:
 def effective_model_config() -> dict:
     """当前生效的模型配置（读 settings 单例；密钥脱敏为 *_set 布尔）。"""
     return {
-        "llm_provider": _settings.llm_provider,
-        "llm_base_url": _settings.llm_base_url,
-        "llm_model": _settings.llm_model,
+        "llm_providers": _masked_entries(_settings.llm_providers),
+        # Ảnh chiếu của entry đầu chuỗi — chỉ để hiển thị "đang dùng gì", không phải nơi cấu hình.
+        "llm_active_provider": _settings.llm_provider,
+        "llm_active_model": _settings.llm_model,
         "llm_temperature": _settings.llm_temperature,
         "llm_max_tokens": _settings.llm_max_tokens,
         "llm_context_window": _settings.llm_context_window,
         "llm_timeout_ms": _settings.llm_timeout_ms,
         "llm_max_retries": _settings.llm_max_retries,
-        "llm_api_key_set": bool(_settings.llm_api_key),
+        "llm_configured": _settings.llm_configured,
         "embedding_model": _settings.embedding_model,
         "embedding_base_url": _settings.embedding_base_url,
         "embedding_dimensions": _settings.embedding_dimensions,
@@ -202,13 +346,22 @@ async def save_model_config(session: AsyncSession, patch: dict) -> dict:
     row = await _load_row(session)
     raw = dict(row.value) if row and isinstance(row.value, dict) else {}
     stored = _normalize_overrides(raw)
+    previous_entries = _provider_entries(stored)
 
     for key, value in patch.items():
         if key not in _FIELDS:
             continue
+        if key == "llm_providers":
+            # Danh sách gửi lên **thay thế toàn bộ** (xoá entry = không gửi entry đó nữa).
+            # Key rỗng trong entry = giữ key cũ theo id, xem _encrypt_entries.
+            stored["llm_providers"] = _encrypt_entries(
+                [dict(entry) for entry in (value or [])],
+                previous_entries,
+            )
+            continue
         if key in _SECRET_FIELDS:
             if value:  # 仅非空才更新；空/None 保留原值
-                stored[key] = str(value)
+                stored[key] = encrypt_secret(str(value), _settings.secret_key)
             continue
         if key in _NULLABLE_FIELDS and (value is None or value == ""):
             stored[key] = None

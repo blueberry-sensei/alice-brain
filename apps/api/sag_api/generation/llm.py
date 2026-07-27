@@ -18,7 +18,9 @@ from sag_agent import ToolCall as RuntimeToolCall
 from sag_api.core.config import Settings
 from sag_api.core.errors import ConfigurationError, UpstreamError
 from sag_api.core.litellm_policy import apply_litellm_completion_policy
+from sag_api.core.llm_routing import ChainRunner
 from sag_api.core.logging import get_logger
+from sag_api.core.model_providers import get_model_provider
 
 log = get_logger("generation")
 
@@ -39,16 +41,69 @@ def _attr(value: Any, name: str, default: Any = None) -> Any:
 
 
 class LLMClient:
-    def __init__(self, settings: Settings) -> None:
+    """Client sinh nội dung, có định tuyến nhiều provider theo thứ tự ưu tiên.
+
+    Failover xảy ra ở **thời điểm gọi provider**. Với stream, nghĩa là: lỗi khi mở stream
+    (429, sai key, model không tồn tại — phần lớn trường hợp) thì đổi nhà; còn nếu stream đã
+    mở và vỡ giữa dòng thì báo lỗi, không ghép nửa câu của hai model vào nhau.
+    """
+
+    def __init__(self, settings: Settings, runner: ChainRunner | None = None) -> None:
         self._settings = settings
+        self._runner = runner or ChainRunner()
 
     @property
     def configured(self) -> bool:
         return self._settings.llm_configured
 
+    @property
+    def runner(self) -> ChainRunner:
+        return self._runner
+
     def _ensure_configured(self) -> None:
         if not self.configured:
-            raise ConfigurationError("尚未配置 LLM（SAG_LLM_PROVIDER / SAG_LLM_API_KEY / SAG_LLM_MODEL）")
+            raise ConfigurationError(
+                "Chưa cấu hình LLM. Mở Settings → Models và thêm ít nhất một provider (có API key)."
+            )
+
+    def health(self) -> list[dict[str, Any]]:
+        """Tình trạng từng provider trong chuỗi (cho API/UI)."""
+        return self._runner.health_snapshot(self._settings.llm_chain)
+
+    def _request_for(
+        self,
+        entry: dict,
+        messages: list[Message],
+        *,
+        stream: bool,
+        tools: list[dict] | None,
+        tool_choice: str | dict | None,
+    ) -> dict[str, Any]:
+        spec = get_model_provider(entry.get("provider") or "openai")
+        temperature = entry.get("temperature")
+        timeout_ms = entry.get("timeout_ms") or self._settings.llm_timeout_ms
+        request: dict[str, Any] = {
+            "model": spec.route_model(str(entry.get("model") or "")),
+            "api_key": entry.get("api_key"),
+            "timeout": timeout_ms / 1000,
+            # Retry do ChainRunner quản để mỗi lần thử đều vào log; tắt retry ngầm của LiteLLM.
+            "num_retries": 0,
+            "messages": messages,
+            "temperature": spec.resolve_temperature(
+                self._settings.llm_temperature if temperature is None else temperature
+            ),
+            "max_tokens": entry.get("max_tokens") or self._settings.llm_max_tokens,
+            "stream": stream,
+        }
+        if tools:
+            request["tools"] = tools
+            if tool_choice is not None:
+                request["tool_choice"] = tool_choice
+        if entry.get("base_url"):
+            request["api_base"] = entry["base_url"]
+        if entry.get("extra_body"):
+            request["extra_body"] = dict(entry["extra_body"])
+        return apply_litellm_completion_policy(self._settings, request)
 
     async def _create_completion(
         self,
@@ -58,24 +113,16 @@ class LLMClient:
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
     ) -> Any:
-        request: dict[str, Any] = {
-            "model": self._settings.routed_llm_model,
-            "api_key": self._settings.llm_api_key,
-            "timeout": self._settings.llm_timeout_ms / 1000,
-            "num_retries": self._settings.llm_max_retries,
-            "messages": messages,
-            "temperature": self._settings.effective_llm_temperature,
-            "max_tokens": self._settings.llm_max_tokens,
-            "stream": stream,
-        }
-        if tools:
-            request["tools"] = tools
-            if tool_choice is not None:
-                request["tool_choice"] = tool_choice
-        if self._settings.llm_base_url:
-            request["api_base"] = self._settings.llm_base_url
-        request = apply_litellm_completion_policy(self._settings, request)
-        return await _litellm_completion(**request)
+        """Gọi provider đầu tiên còn khoẻ; 429/hết quota/sai key thì tự chuyển sang provider kế."""
+
+        async def call(entry: dict) -> Any:
+            return await _litellm_completion(
+                **self._request_for(
+                    entry, messages, stream=stream, tools=tools, tool_choice=tool_choice
+                )
+            )
+
+        return await self._runner.run(self._settings.llm_chain, call, stage="generation")
 
     @staticmethod
     async def _close_stream(stream: Any) -> None:
