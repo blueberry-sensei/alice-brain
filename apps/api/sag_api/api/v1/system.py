@@ -228,19 +228,19 @@ async def _probe(llm: LLMClient, label: str) -> tuple[bool, str]:
     except Exception as e:  # noqa: BLE001
         return False, f"Chat thất bại · {label} · {e}"
 
+    # Structured output là TUỲ CHỌN, không phải điều kiện sống còn: engine tự bỏ
+    # `response_format` và chuyển sang JSON theo prompt khi gateway từ chối (alicecore
+    # `core/ai/base.py`). Vì vậy bước này chỉ để BÁO CHẾ ĐỘ, không được đánh trượt provider.
     try:
         await llm.complete(
             [{"role": "user", "content": 'Return exactly {"ok": true}'}],
             response_format=_PROBE_SCHEMA,
         )
-    except ApiError as e:
-        return False, (f"Chat chạy được nhưng KHÔNG hỗ trợ structured output · {label} · "
-                       f"{e.message} — provider này không dùng để ingest/trích xuất được.")
-    except Exception as e:  # noqa: BLE001
-        return False, (f"Chat chạy được nhưng KHÔNG hỗ trợ structured output · {label} · {e} "
-                       "— provider này không dùng để ingest/trích xuất được.")
+    except Exception:  # noqa: BLE001
+        return True, (f"Chạy được · {label} · gateway không nhận structured output nên engine "
+                      "sẽ lấy JSON theo prompt (bóc + sửa + kiểm schema + thử lại).")
 
-    return True, f"Chat + structured output đều chạy · {label}"
+    return True, f"Chạy được · {label} · có structured output"
 
 
 @router.post("/model-config/test")
