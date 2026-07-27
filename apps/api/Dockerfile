@@ -1,3 +1,13 @@
+# ── Nguồn engine ALICE CORE ─────────────────────────────────────────────────
+# Engine ở repo riêng. Stage này có HAI cách được thoả, và cả hai cho ra cây thư mục
+# giống hệt nhau nên `COPY --from=alicecore .` bên dưới không cần biết mình đang ở đường nào:
+#
+#   - CI  : image do repo alice-core publish (mặc định dưới đây).
+#   - Dev : `--build-context alicecore=<thư mục alice-core trên máy>` GHI ĐÈ stage này,
+#           compose khai báo qua `additional_contexts` trong compose.dev.yaml.
+ARG ALICECORE_IMAGE=ghcr.io/blueberry-sensei/alice-core:latest
+FROM ${ALICECORE_IMAGE} AS alicecore
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -13,9 +23,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # ── ALICE CORE ──────────────────────────────────────────────────────────────
-# Engine là package CỤC BỘ, KHÔNG có trên PyPI. Nó được nạp qua additional build
-# context tên `alicecore` (khai báo ở compose.yaml), nên vẫn nằm ở repo riêng và
-# dùng chung được cho nhiều project — không phải nhân bản file vào đây.
+# Engine là package CỤC BỘ, KHÔNG có trên PyPI. Nguồn của stage `alicecore` xem phần đầu file.
 COPY --from=alicecore . /opt/alicecore
 RUN pip install --upgrade pip hatchling \
  && pip install /opt/alicecore

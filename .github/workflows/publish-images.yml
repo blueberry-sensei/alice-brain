@@ -4,11 +4,16 @@
 # `alice-core` giữ được PRIVATE mà image vẫn công khai — trên ghcr.io, visibility của package
 # tách rời visibility của repo, và package công khai cho phép pull ẩn danh.
 #
-# CÀI ĐẶT MỘT LẦN (xem README mục "Publish image"):
-#   1. Secret `ALICE_CORE_TOKEN` — PAT có quyền đọc repo `alice-core` (workflow này nằm ở
-#      repo khác nên `GITHUB_TOKEN` mặc định không với tới được).
-#   2. Sau lần chạy đầu, vào Packages → alice-brain-api / alice-brain-web → Package settings
-#      → đổi visibility sang **Public**. Không làm bước này thì người dùng phải đăng nhập mới pull được.
+# KHÔNG dùng PAT. Engine ALICE CORE vào image api qua image `ghcr.io/<owner>/alice-core` do
+# repo alice-core tự publish, nên ở đây `GITHUB_TOKEN` mặc định là đủ.
+#
+# CÀI ĐẶT MỘT LẦN:
+#   1. Repo `alice-core` chạy workflow `publish-image` ít nhất một lần.
+#   2. Packages → alice-core → Package settings → Manage Actions access
+#      → Add repository → `alice-brain` → role **Read**. (Thiếu bước này thì bước build dưới
+#      đây sẽ 403 lúc kéo image engine.)
+#   3. Sau lần chạy đầu: Packages → alice-brain-api / alice-brain-web → Package settings
+#      → visibility **Public**. Bỏ bước này thì người dùng phải `docker login` mới pull được.
 
 name: publish-images
 
@@ -31,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # `write` bao hàm cả `read`: vừa push image của repo này, vừa kéo image engine của alice-core.
       packages: write
     strategy:
       # Không fail-fast: web hỏng thì vẫn muốn biết api có build được không.
@@ -42,20 +48,7 @@ jobs:
           - name: web
             context: apps/web
     steps:
-      - name: Lấy alice-brain
-        uses: actions/checkout@v4
-        with:
-          path: alice-brain
-
-      # Engine nằm ở repo riêng và được nạp vào image api qua build context tên `alicecore`
-      # (xem apps/api/Dockerfile). Bước này chỉ cần cho image api.
-      - name: Lấy alice-core
-        if: matrix.name == 'api'
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/alice-core
-          token: ${{ secrets.ALICE_CORE_TOKEN }}
-          path: alice-core
+      - uses: actions/checkout@v5
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -80,9 +73,10 @@ jobs:
       - name: Build và push
         uses: docker/build-push-action@v6
         with:
-          context: alice-brain/${{ matrix.context }}
-          # Chỉ image api cần engine; với web thì dòng này rỗng và bị bỏ qua.
-          build-contexts: ${{ matrix.name == 'api' && 'alicecore=alice-core' || '' }}
+          context: ${{ matrix.context }}
+          # Chỉ image api cần engine; với web thì build-arg này thừa và bị bỏ qua.
+          build-args: |
+            ALICECORE_IMAGE=${{ env.REGISTRY }}/${{ github.repository_owner }}/alice-core:latest
           platforms: ${{ inputs.platforms || 'linux/amd64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
