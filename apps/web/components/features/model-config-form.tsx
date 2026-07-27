@@ -39,7 +39,7 @@ export function ModelConfigForm() {
   const [attempts, setAttempts] = React.useState<ProviderAttempt[]>([]);
   const [temperature, setTemperature] = React.useState(0.3);
   const [maxTokens, setMaxTokens] = React.useState(20_000);
-  const [timeoutMs, setTimeoutMs] = React.useState(60_000);
+  const [timeoutMs, setTimeoutMs] = React.useState(360_000);
   const [maxRetries, setMaxRetries] = React.useState(2);
   const [ctxWindow, setCtxWindow] = React.useState(128000);
   const [embModel, setEmbModel] = React.useState("");
@@ -74,7 +74,7 @@ export function ModelConfigForm() {
     );
     setTemperature(config.llm_temperature);
     setMaxTokens(config.llm_max_tokens);
-    setTimeoutMs(config.llm_timeout_ms ?? 60_000);
+    setTimeoutMs(config.llm_timeout_ms ?? 360_000);
     setMaxRetries(config.llm_max_retries ?? 2);
     setCtxWindow(config.llm_context_window ?? 128000);
     setEmbModel(config.embedding_model);

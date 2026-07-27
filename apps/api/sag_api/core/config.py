@@ -113,7 +113,9 @@ class Settings(BaseSettings):
     llm_temperature: float = _DEFAULT_LLM_PROVIDER.default_temperature
     llm_max_tokens: int = 20_000
     llm_context_window: int = _DEFAULT_LLM_PROVIDER.default_context_window
-    llm_timeout_ms: int = Field(default=60_000, ge=1_000, le=600_000)
+    # 6 phút: model reasoning qua gateway chậm thường mất 2-3 phút cho một chunk; 60s là
+    # cắt giữa chừng rồi báo timeout, không phải lỗi provider.
+    llm_timeout_ms: int = Field(default=360_000, ge=1_000, le=600_000)
     llm_max_retries: int = Field(default=2, ge=0, le=10)
     # 透传给 chat/completions 的额外请求体（JSON），如 {"enable_thinking": false}；
     # 未配置时对 qwen 系模型通过 LiteLLM reasoning_effort=none 统一关闭思考。
