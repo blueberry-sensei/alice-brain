@@ -198,49 +198,19 @@ async def get_provider_attempts(
     }
 
 
-#: Schema tối giản cho bước kiểm structured output. Đường trích xuất của engine luôn gửi
-#: `response_format: {"type": "json_schema", ...}` (alicecore `core/ai/base.py`), nên nếu
-#: gateway không nhận nó thì ingest sẽ hỏng — dù chat thường vẫn chạy.
-_PROBE_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "structured_output",
-        "schema": {
-            "type": "object",
-            "properties": {"ok": {"type": "boolean"}},
-            "required": ["ok"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-
 async def _probe(llm: LLMClient, label: str) -> tuple[bool, str]:
-    """Chạy hai bước kiểm mà hệ thống THẬT SỰ dựa vào, báo cáo riêng từng bước.
+    """Thử đúng một lượt chat — đó là toàn bộ thứ engine dùng.
 
-    Chỉ thử "ping" là chưa đủ: nó xanh với gateway không hỗ trợ structured output, rồi người
-    dùng mới phát hiện lúc ingest. Test phải vỡ ở đúng chỗ hệ thống sẽ vỡ.
+    Không thử structured output nữa: engine không gửi `response_format` (alicecore
+    `core/ai/base.py`), JSON lấy theo prompt rồi bóc + kiểm schema + thử lại.
     """
     try:
         await llm.complete([{"role": "user", "content": "ping"}])
     except ApiError as e:
-        return False, f"Chat thất bại · {label} · {e.message}"
+        return False, f"Thất bại · {label} · {e.message}"
     except Exception as e:  # noqa: BLE001
-        return False, f"Chat thất bại · {label} · {e}"
-
-    # Structured output là TUỲ CHỌN, không phải điều kiện sống còn: engine tự bỏ
-    # `response_format` và chuyển sang JSON theo prompt khi gateway từ chối (alicecore
-    # `core/ai/base.py`). Vì vậy bước này chỉ để BÁO CHẾ ĐỘ, không được đánh trượt provider.
-    try:
-        await llm.complete(
-            [{"role": "user", "content": 'Return exactly {"ok": true}'}],
-            response_format=_PROBE_SCHEMA,
-        )
-    except Exception:  # noqa: BLE001
-        return True, (f"Chạy được · {label} · gateway không nhận structured output nên engine "
-                      "sẽ lấy JSON theo prompt (bóc + sửa + kiểm schema + thử lại).")
-
-    return True, f"Chạy được · {label} · có structured output"
+        return False, f"Thất bại · {label} · {e}"
+    return True, f"Chạy được · {label}"
 
 
 @router.post("/model-config/test")
