@@ -12,6 +12,8 @@ from sag_api.core.errors import ApiError, ConfigurationError, ConflictError, Val
 from sag_api.core.llm_routing import ChainRunner, recent_attempts
 from sag_api.core.logging import get_logger
 from sag_api.core.model_providers import model_provider_catalog
+from sag_api.core.telemetry import STAGE_PROBE
+from sag_api.core.telemetry import use_context as use_telemetry_context
 from sag_api.db.models import Source, User
 from sag_api.generation import LLMClient
 from sag_api.mcp.server import MCP_TOOL_DETAILS, MCP_TOOL_NAMES
@@ -275,7 +277,10 @@ async def _probe(llm: LLMClient, label: str) -> tuple[bool, str]:
     `core/ai/base.py`), JSON lấy theo prompt rồi bóc + kiểm schema + thử lại.
     """
     try:
-        await llm.complete([{"role": "user", "content": "ping"}])
+        # Lượt thử này cũng tốn tiền như mọi lượt khác → vào telemetry với stage riêng,
+        # để chi phí "bấm nút Test" không lẫn vào chi phí trả lời người dùng.
+        with use_telemetry_context(stage=STAGE_PROBE, actor="settings-test"):
+            await llm.complete([{"role": "user", "content": "ping"}])
     except ApiError as e:
         return False, f"Thất bại · {label} · {e.message}"
     except Exception as e:  # noqa: BLE001

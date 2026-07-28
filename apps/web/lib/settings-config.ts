@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   Cpu,
   LibraryBig,
@@ -20,6 +21,7 @@ export const SETTINGS_TABS = [
   { value: "model", labelKey: "model", icon: Cpu },
   { value: "subAgents", labelKey: "subAgents", icon: Bot },
   { value: "knowledge", labelKey: "knowledge", icon: LibraryBig },
+  { value: "telemetry", labelKey: "telemetry", icon: Activity },
   { value: "appearance", labelKey: "appearance", icon: Palette },
   { value: "graph", labelKey: "graph", icon: Orbit },
 ] as const;

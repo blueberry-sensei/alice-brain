@@ -44,6 +44,25 @@ async def _send_json(send, status: int, payload: dict) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+def _header(scope, name: bytes) -> str | None:
+    for key, value in scope.get("headers") or []:
+        if key == name:
+            return value.decode("latin-1").strip() or None
+    return None
+
+
+def _actor(scope, params: dict[str, list[str]]) -> str:
+    """Nhãn của client MCP, chỉ dùng cho telemetry.
+
+    Không có cách chuẩn nào để biết tên host MCP ở tầng ASGI, nên nhận theo thứ tự:
+    `?actor=`, header `x-alice-actor`, rồi mới tới `user-agent`. Đây là dữ liệu do client
+    khai — dùng để phân biệt "ai đang tra cứu", **không** dùng cho phân quyền.
+    """
+    declared = (params.get("actor") or [""])[0].strip()
+    label = declared or _header(scope, b"x-alice-actor") or _header(scope, b"user-agent") or "mcp-http"
+    return label[:120]
+
+
 def _bearer(scope) -> str | None:
     for name, value in scope.get("headers") or []:
         if name == b"authorization":
@@ -87,7 +106,12 @@ class ScopedKnowledgeMCP:
             return
 
         engine_manager = self._parent.state.engine_manager
-        with use_scope(engine_manager, sources):
+        with use_scope(
+            engine_manager,
+            sources,
+            actor=_actor(scope, params),
+            transport="http",
+        ):
             await self._mcp(scope, receive, send)
 
 

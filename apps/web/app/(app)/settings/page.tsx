@@ -10,6 +10,7 @@ import { KnowledgeConfigForm } from "@/components/features/knowledge-config-form
 import { ModelConfigForm } from "@/components/features/model-config-form";
 import { PageHeader } from "@/components/features/page-header";
 import { SubAgentConfigForm } from "@/components/features/sub-agent-config-form";
+import { TelemetryPanel } from "@/components/features/telemetry-panel";
 import { UniverseViewSettings } from "@/components/features/universe-view-settings-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -88,6 +89,10 @@ function SettingsPageContent() {
 
         <TabsContent value="knowledge" className="m-0 animate-fade-in">
           <KnowledgeConfigForm />
+        </TabsContent>
+
+        <TabsContent value="telemetry" className="m-0 animate-fade-in">
+          <TelemetryPanel />
         </TabsContent>
 
         <TabsContent value="appearance" className="m-0 animate-fade-in">

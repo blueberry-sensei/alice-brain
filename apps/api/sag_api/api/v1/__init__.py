@@ -12,6 +12,7 @@ from sag_api.api.v1 import (
     search,
     sources,
     system,
+    telemetry,
     universe,
 )
 
@@ -28,6 +29,7 @@ for _module in (
     activity,
     attachments,
     system,
+    telemetry,
     universe,
 ):
     api_router.include_router(_module.router)

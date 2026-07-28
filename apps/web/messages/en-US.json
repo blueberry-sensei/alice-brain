@@ -105,7 +105,8 @@
       "knowledge": "Knowledge",
       "integrations": "Integrations",
       "appearance": "Appearance",
-      "graph": "Graph"
+      "graph": "Graph",
+      "telemetry": "Telemetry"
     },
     "models": "Mô hình",
     "appearance": "Giao diện",
@@ -1212,5 +1213,50 @@
     "fullscreen": "View full screen",
     "continentPlanet": "Continent planet",
     "dualOrbit": "Dual-sphere orbit"
+  },
+  "Telemetry": {
+    "title": "Telemetry",
+    "description": "Where the money and the knowledge go: every LLM request with its tokens and cost, and every time an agent pulled knowledge through this brain.",
+    "range": "{days, plural, one {# day} other {# days}}",
+    "refresh": "Refresh",
+    "clear": "Clear",
+    "purged": "Cleared {count} records",
+    "totalCost": "Cost",
+    "totalTokens": "Tokens",
+    "totalCalls": "LLM requests",
+    "agentActivity": "Knowledge calls",
+    "tokensInOut": "in {input} · out {output}",
+    "costUnknown": "price unknown",
+    "unpricedHint": "{count, plural, one {# request has no price table} other {# requests have no price table}}",
+    "failedHint": "{count, plural, =0 {all succeeded} one {# failed} other {# failed}}",
+    "delegationHint": "{count, plural, =0 {no delegation logged} one {# delegation logged} other {# delegations logged}}",
+    "retention": "Records older than {days} days are removed automatically. Nothing leaves this machine.",
+    "disabled": "Telemetry is switched off (SAG_TELEMETRY_ENABLED=false); nothing new is being recorded.",
+    "byStage": "By stage",
+    "byStageHint": "Extraction is ingest — the distilling cost. Generation answers users, embedding vectorises, probe is the Test button.",
+    "byModel": "By model",
+    "byModelHint": "A dash means this model has no price table, so its cost is unknown rather than zero.",
+    "recent": "Recent activity",
+    "recentHint": "The last 50 LLM requests, and the last 50 things an agent did through this brain.",
+    "tabCalls": "LLM requests",
+    "tabAgent": "Agent activity",
+    "noCalls": "No LLM request recorded yet.",
+    "noEvents": "No agent activity recorded yet.",
+    "resultSummary": "{count} results · {chars} characters",
+    "columnStage": "Stage",
+    "columnModel": "Model",
+    "columnCalls": "Requests",
+    "columnTokens": "Tokens",
+    "columnCost": "Cost",
+    "stage": {
+      "extraction": "Extraction",
+      "generation": "Generation",
+      "embedding": "Embedding",
+      "probe": "Connection test"
+    },
+    "kind": {
+      "knowledge": "Knowledge",
+      "delegation": "Delegation"
+    }
   }
 }

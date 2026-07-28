@@ -105,7 +105,8 @@
       "knowledge": "Knowledge",
       "integrations": "Integrations",
       "appearance": "Appearance",
-      "graph": "Graph"
+      "graph": "Graph",
+      "telemetry": "Telemetry"
     },
     "models": "Mô hình",
     "appearance": "Giao diện",
@@ -1212,5 +1213,50 @@
     "fullscreen": "View full screen",
     "continentPlanet": "Continent planet",
     "dualOrbit": "Dual-sphere orbit"
+  },
+  "Telemetry": {
+    "title": "Telemetry",
+    "description": "Tiền và tri thức đi đâu: mọi request LLM kèm token và chi phí, cùng mọi lần agent lấy tri thức qua não này.",
+    "range": "{days, plural, other {# ngày}}",
+    "refresh": "Tải lại",
+    "clear": "Xoá sạch",
+    "purged": "Đã xoá {count} bản ghi",
+    "totalCost": "Chi phí",
+    "totalTokens": "Token",
+    "totalCalls": "Request LLM",
+    "agentActivity": "Lượt lấy tri thức",
+    "tokensInOut": "vào {input} · ra {output}",
+    "costUnknown": "chưa biết giá",
+    "unpricedHint": "{count, plural, other {# request không có bảng giá}}",
+    "failedHint": "{count, plural, =0 {tất cả đều thành công} other {# lượt thất bại}}",
+    "delegationHint": "{count, plural, =0 {chưa ghi lần giao việc nào} other {đã ghi # lần giao việc}}",
+    "retention": "Bản ghi cũ hơn {days} ngày tự bị xoá. Dữ liệu không rời khỏi máy này.",
+    "disabled": "Telemetry đang tắt (SAG_TELEMETRY_ENABLED=false); không có gì mới được ghi.",
+    "byStage": "Theo giai đoạn",
+    "byStageHint": "Extraction là ingest — chi phí tinh luyện. Generation trả lời người dùng, embedding tạo vector, probe là nút Test.",
+    "byModel": "Theo model",
+    "byModelHint": "Dấu gạch nghĩa là model này không có bảng giá, nên chi phí là chưa biết chứ không phải bằng 0.",
+    "recent": "Hoạt động gần đây",
+    "recentHint": "50 request LLM gần nhất, và 50 việc gần nhất agent làm qua não này.",
+    "tabCalls": "Request LLM",
+    "tabAgent": "Hoạt động agent",
+    "noCalls": "Chưa ghi được request LLM nào.",
+    "noEvents": "Chưa ghi được hoạt động agent nào.",
+    "resultSummary": "{count} kết quả · {chars} ký tự",
+    "columnStage": "Giai đoạn",
+    "columnModel": "Model",
+    "columnCalls": "Lượt gọi",
+    "columnTokens": "Token",
+    "columnCost": "Chi phí",
+    "stage": {
+      "extraction": "Tinh luyện",
+      "generation": "Sinh câu trả lời",
+      "embedding": "Embedding",
+      "probe": "Kiểm tra kết nối"
+    },
+    "kind": {
+      "knowledge": "Tri thức",
+      "delegation": "Giao việc"
+    }
   }
 }

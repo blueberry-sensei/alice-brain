@@ -180,6 +180,12 @@ class Settings(BaseSettings):
     # Load only a bounded recent window; older conversation belongs in the rolling summary, not a full replay.
     history_load_limit: int = Field(default=200, ge=1, le=1000)
 
+    # ── Telemetry ───────────────────────────────────────────────────────
+    # Ghi lại mọi request LLM (token + chi phí) và mọi lần agent lấy tri thức qua MCP.
+    # Dữ liệu nằm trong chính DB của brain, không gửi đi đâu.
+    telemetry_enabled: bool = True
+    telemetry_retention_days: int = Field(default=30, ge=1, le=365)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:

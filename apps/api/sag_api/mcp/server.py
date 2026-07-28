@@ -10,15 +10,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import functools
+import re
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from sag_api.core.telemetry import AgentEventRecord, emit_agent_event
 from sag_api.services.retrieval_service import retrieve_relevant_sections
 
 if TYPE_CHECKING:
@@ -73,6 +77,15 @@ MCP_TOOL_DETAILS: tuple[MCPToolDetail, ...] = (
         "label": "Read chunk",
         "description": "Read one chunk's full raw text by chunk_id, to verify and cite evidence.",
     },
+    {
+        "name": "log_agent_task",
+        "label": "Log a delegated task",
+        "description": (
+            "Record that you handed a task to a sub-agent (or finished one yourself). "
+            "The knowledge base cannot see CLI sub-agents, so this is the only way that work "
+            "shows up in the telemetry page next to its retrieval and token cost."
+        ),
+    },
 )
 MCP_TOOL_NAMES = tuple(tool["name"] for tool in MCP_TOOL_DETAILS)
 MCP_TOOL_LABELS = {tool["name"]: tool["label"] for tool in MCP_TOOL_DETAILS}
@@ -101,6 +114,10 @@ class MCPScope:
 
     engine_manager: EngineManager
     sources: tuple[Source, ...]
+    #: Who is calling (an MCP client label, or "agent" for the in-process loop). Telemetry only.
+    actor: str = "unknown"
+    #: http | stdio | inproc - which door the call came through. Telemetry only.
+    transport: str = "http"
 
 
 _scope: contextvars.ContextVar[MCPScope | None] = contextvars.ContextVar(
@@ -116,17 +133,113 @@ def _require_scope() -> MCPScope:
 
 
 @contextlib.contextmanager
-def use_scope(engine_manager: EngineManager, sources: Source | Iterable[Source]):
+def use_scope(
+    engine_manager: EngineManager,
+    sources: Source | Iterable[Source],
+    *,
+    actor: str = "unknown",
+    transport: str = "http",
+):
     """Bind one source, or a set of sources, inside the context."""
     if hasattr(sources, "sag_source_config_id"):
         selected = (sources,)
     else:
         selected = tuple(sources)
-    token = _scope.set(MCPScope(engine_manager=engine_manager, sources=selected))
+    token = _scope.set(
+        MCPScope(
+            engine_manager=engine_manager,
+            sources=selected,
+            actor=actor or "unknown",
+            transport=transport,
+        )
+    )
     try:
         yield
     finally:
         _scope.reset(token)
+
+
+# ── Telemetry của tool tri thức ────────────────────────────────────────────
+#
+# Đây là chỗ trả lời "khi vibe, agent lấy được tri thức gì và lấy như nào": mỗi lần gọi
+# tool ghi lại tham số, số bằng chứng trả về, chunk_id đã chạm và độ trễ. Đo tại tool
+# nên **mọi** đường vào (HTTP, stdio, vòng chạy nội bộ) đều được tính, không phải bọc
+# riêng từng transport.
+
+_CHUNK_ID_RE = re.compile(r"chunk_id=([A-Za-z0-9_\-]+)")
+_DOCUMENT_ID_RE = re.compile(r"\bid=([a-f0-9]{32})\b")
+#: Tham số mang "câu hỏi" của từng tool, theo thứ tự ưu tiên khi ghi log.
+_QUERY_FIELDS = ("query", "pattern", "name", "document_id", "chunk_id", "source_id")
+#: Kết quả rỗng của các tool đều là một dòng trong ngoặc đơn, ví dụ "(nothing matched)".
+_EMPTY_RESULT_RE = re.compile(r"^\([^)\n]{0,120}\)$")
+_PREVIEW_CHARS = 400
+
+
+def _result_stats(text: str) -> tuple[int, list[str]]:
+    """Đếm số kết quả và gom chunk_id đã trả về (dùng chính định dạng text của tool)."""
+    if not text or _EMPTY_RESULT_RE.match(text.strip()):
+        return 0, []
+    chunk_ids = list(dict.fromkeys(_CHUNK_ID_RE.findall(text)))[:20]
+    if chunk_ids:
+        return len(chunk_ids), chunk_ids
+    listed = len([line for line in text.splitlines() if line.startswith("- ")])
+    return (listed or 1), []
+
+
+def _traced(tool_name: str):
+    """Bọc một tool tri thức để ghi lại lần gọi. Không đổi chữ ký (FastMCP vẫn sinh schema đúng)."""
+
+    def decorate(func):
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> str:
+            scope = _scope.get()
+            started = time.monotonic()
+            query = next((str(kwargs[field]) for field in _QUERY_FIELDS if kwargs.get(field)), None)
+            detail: dict[str, Any] = {"args": {k: v for k, v in kwargs.items() if v not in ("", None)}}
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as error:  # noqa: BLE001 - ghi rồi ném tiếp, không nuốt
+                await emit_agent_event(
+                    AgentEventRecord(
+                        kind="knowledge_call",
+                        actor=scope.actor if scope else "unknown",
+                        transport=scope.transport if scope else "http",
+                        tool=tool_name,
+                        query=query,
+                        ok=False,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        detail=detail,
+                        error=str(error)[:500],
+                    )
+                )
+                raise
+            text = result if isinstance(result, str) else str(result)
+            count, chunk_ids = _result_stats(text)
+            if chunk_ids:
+                detail["chunk_ids"] = chunk_ids
+            documents = list(dict.fromkeys(_DOCUMENT_ID_RE.findall(text)))[:20]
+            if documents:
+                detail["document_ids"] = documents
+            detail["preview"] = text[:_PREVIEW_CHARS]
+            await emit_agent_event(
+                AgentEventRecord(
+                    kind="knowledge_call",
+                    actor=scope.actor if scope else "unknown",
+                    transport=scope.transport if scope else "http",
+                    tool=tool_name,
+                    query=query,
+                    ok=True,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    result_count=count,
+                    result_chars=len(text),
+                    detail=detail,
+                )
+            )
+            return result
+
+        return wrapper
+
+    return decorate
 
 
 def _selected_sources(scope: MCPScope, source_id: str = "") -> tuple[Source, ...]:
@@ -195,6 +308,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["list_sources"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("list_sources")
     async def list_sources() -> str:
         scope = _require_scope()
         if not scope.sources:
@@ -209,6 +323,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["search"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("search")
     async def search(
         query: Annotated[str, Field(description="The question, topic or keywords to look for.")],
         top_k: Annotated[
@@ -237,6 +352,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["get_entity"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("get_entity")
     async def get_entity(
         name: Annotated[
             str,
@@ -292,6 +408,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["list_documents"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("list_documents")
     async def list_documents(source_id: SourceId = "") -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
@@ -341,6 +458,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["outline"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("outline")
     async def outline(document_id: DocumentId) -> str:
         scope = _require_scope()
         match = await _document_in_scope(scope, document_id)
@@ -367,6 +485,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["grep"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("grep")
     async def grep(
         pattern: Annotated[
             str,
@@ -422,6 +541,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["read"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("read")
     async def read(
         document_id: DocumentId,
         offset: Annotated[
@@ -463,6 +583,7 @@ def build_source_mcp(
         description=MCP_TOOL_DESCRIPTIONS["get_chunk"],
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
+    @_traced("get_chunk")
     async def get_chunk(chunk_id: ChunkId, source_id: SourceId = "") -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
@@ -489,6 +610,68 @@ def build_source_mcp(
         heading = (chunk.heading or "").strip()
         body = f"{heading}\n\n{chunk.content}".strip() if heading else chunk.content
         return f"Source: {_source_title(source)}\n\n{body}" if len(selected) > 1 else body
+
+    @mcp.tool(
+        title=MCP_TOOL_LABELS["log_agent_task"],
+        description=MCP_TOOL_DESCRIPTIONS["log_agent_task"],
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
+    async def log_agent_task(
+        agent: Annotated[
+            str,
+            Field(description="Which agent did the work, e.g. 'opencode-go', 'claude', 'gemini-cli', or 'self'."),
+        ],
+        task: Annotated[str, Field(description="One line describing the work that was delegated or done.")],
+        status: Annotated[
+            str,
+            Field(description="started | done | failed. Use 'started' when handing over and log again when it ends."),
+        ] = "done",
+        model: Annotated[str, Field(description="Model the sub-agent ran, when known.")] = "",
+        note: Annotated[str, Field(description="Result, verify command output, or why it failed.")] = "",
+        input_tokens: Annotated[int, Field(description="Sub-agent prompt tokens, when the CLI reports them.")] = 0,
+        output_tokens: Annotated[int, Field(description="Sub-agent completion tokens, when the CLI reports them.")] = 0,
+        cost_usd: Annotated[float, Field(description="Sub-agent cost in USD, when the CLI reports it.")] = 0.0,
+    ) -> str:
+        """Ghi một lần giao việc cho sub-agent.
+
+        Brain **không** nhìn thấy sub-agent chạy bằng CLI trên máy — nó không đi qua đây.
+        Nên đường duy nhất để việc đó lên được telemetry là orchestrator tự khai báo.
+        Số token/chi phí ở đây là **do agent khai**, không phải brain đo được: cột
+        `cost_source` của bản ghi vì thế ghi rõ là "reported".
+        """
+        scope = _scope.get()
+        normalized_status = (status or "done").strip().lower()
+        if normalized_status not in {"started", "done", "failed"}:
+            normalized_status = "done"
+        label = (agent or "").strip() or "unknown"
+        summary = (task or "").strip()
+        if not summary:
+            return "(task is required: say in one line what was delegated)"
+        await emit_agent_event(
+            AgentEventRecord(
+                kind="delegation",
+                actor=scope.actor if scope else "unknown",
+                transport=scope.transport if scope else "http",
+                tool=label,
+                query=summary[:2000],
+                model=(model or "").strip() or None,
+                ok=normalized_status != "failed",
+                detail={
+                    "status": normalized_status,
+                    "note": (note or "").strip()[:2000],
+                    "input_tokens": max(0, int(input_tokens or 0)),
+                    "output_tokens": max(0, int(output_tokens or 0)),
+                    "cost_usd": max(0.0, float(cost_usd or 0.0)),
+                    "cost_source": "reported",
+                },
+            )
+        )
+        return f"logged: {label} · {normalized_status} · {summary[:120]}"
 
     return mcp
 
@@ -523,8 +706,13 @@ async def serve_stdio(source_id: str | None = None) -> None:
         raise SystemExit(f"Source does not exist: {source_id}")
 
     mcp = get_source_mcp()
+    import os
+
+    # Cầu nối stdio không có header để tự giới thiệu; agent khai tên qua biến môi trường
+    # trong chính lệnh bridge (`docker exec -e SAG_MCP_ACTOR=claude-code …`).
+    actor = os.environ.get("SAG_MCP_ACTOR", "").strip() or "mcp-stdio"
     try:
-        with use_scope(engine_manager, sources):
+        with use_scope(engine_manager, sources, actor=actor, transport="stdio"):
             await mcp.run_stdio_async()
     finally:
         await engine_manager.aclose_all()

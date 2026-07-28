@@ -28,6 +28,10 @@ import type {
   SubAgentConfig,
   SubAgentEntryInput,
   SubAgentModels,
+  TelemetryAgentEvent,
+  TelemetryLLMCall,
+  TelemetryPage,
+  TelemetrySummary,
   Thread,
   TokenResponse,
   User,
@@ -490,6 +494,25 @@ export const api = {
     request<ProviderAttemptsResponse>(
       `/api/v1/system/model-config/attempts?limit=${limit}`,
     ),
+
+  // Telemetry — token/chi phí của mọi lời gọi LLM, và dấu vết agent lấy tri thức
+  telemetrySummary: (days = 7) =>
+    request<TelemetrySummary>(`/api/v1/telemetry/summary?days=${days}`),
+  telemetryCalls: (params: { limit?: number; stage?: string; ok?: boolean } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+    if (params.stage) query.set("stage", params.stage);
+    if (params.ok !== undefined) query.set("ok", String(params.ok));
+    return request<TelemetryPage<TelemetryLLMCall>>(`/api/v1/telemetry/llm-calls?${query}`);
+  },
+  telemetryAgentEvents: (params: { limit?: number; kind?: string } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+    if (params.kind) query.set("kind", params.kind);
+    return request<TelemetryPage<TelemetryAgentEvent>>(`/api/v1/telemetry/agent-events?${query}`);
+  },
+  purgeTelemetry: () =>
+    request<{ llm_calls: number; agent_events: number }>("/api/v1/telemetry", {
+      method: "DELETE",
+    }),
 
   // Sources
   listSources: () => request<Source[]>("/api/v1/sources"),

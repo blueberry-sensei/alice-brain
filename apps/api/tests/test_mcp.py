@@ -83,7 +83,10 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                         assert tool.title == detail["label"]
                         assert tool.description == detail["description"]
                         assert tool.annotations is not None
-                        assert tool.annotations.readOnlyHint is True
+                        # Every knowledge tool stays read-only; log_agent_task is the one
+                        # writer (it records telemetry, never knowledge), so it is declared
+                        # as such instead of quietly pretending to be read-only.
+                        assert tool.annotations.readOnlyHint is (detail["name"] != "log_agent_task")
                         assert tool.annotations.destructiveHint is False
                     search_properties = tools_by_name["search"].inputSchema["properties"]
                     assert search_properties["query"]["description"]

@@ -19,11 +19,18 @@ from sag_api.core.db import SessionLocal, dispose_db, init_db
 from sag_api.core.errors import ApiError
 from sag_api.core.litellm_policy import install_litellm_policy, uninstall_litellm_policy
 from sag_api.core.logging import RequestContextMiddleware, configure_logging, get_logger
+from sag_api.core.telemetry_litellm import install_litellm_telemetry, uninstall_litellm_telemetry
 from sag_api.generation import LLMClient
 from sag_api.jobs import InProcessAsyncQueue
 from sag_api.sag import EngineManager
 from sag_api.sag.attempt_bridge import install_engine_attempt_bridge, uninstall_engine_attempt_bridge
 from sag_api.sag.compat import install_engine_extract_compat
+from sag_api.sag.embedding_telemetry import (
+    install_engine_embedding_telemetry,
+    uninstall_engine_embedding_telemetry,
+)
+from sag_api.services import telemetry_service
+from sag_api.services.telemetry_service import install_telemetry_store, uninstall_telemetry_store
 
 log = get_logger("app")
 
@@ -63,6 +70,12 @@ async def lifespan(app: FastAPI):
     # parameters as the Muse generation chain without patching the dependency.
     install_engine_extract_compat()
     litellm_policy = install_litellm_policy(settings)
+    # Telemetry: mọi request LLM (chat lẫn trích xuất) đi qua LiteLLM nên một callback là
+    # đủ thấy hết token/chi phí; embedding của engine đi bằng SDK openai nên có sink riêng.
+    install_telemetry_store(SessionLocal)
+    litellm_telemetry = install_litellm_telemetry()
+    install_engine_embedding_telemetry()
+    await telemetry_service.prune_now()
     # Engine tự chuyển provider khi trích xuất; hứng log của nó về cùng một chỗ với đường
     # chat để UI chỉ phải đọc một nguồn khi hỏi "vừa rồi provider nào fail".
     install_engine_attempt_bridge()
@@ -106,6 +119,9 @@ async def lifespan(app: FastAPI):
             await dispose_db()
         finally:
             uninstall_engine_attempt_bridge()
+            uninstall_engine_embedding_telemetry()
+            uninstall_litellm_telemetry(litellm_telemetry)
+            uninstall_telemetry_store()
             uninstall_litellm_policy(litellm_policy)
 
 

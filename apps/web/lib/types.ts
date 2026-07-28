@@ -208,6 +208,96 @@ export interface ProviderAttemptsResponse {
   health: ProviderHealth[];
 }
 
+/** Vùng nghiệp vụ đã gọi LLM. Server có thể thêm loại mới nên `string` là chủ ý. */
+export type TelemetryStage = "extraction" | "generation" | "embedding" | "probe" | string;
+
+export interface TelemetryLLMCall {
+  id: string;
+  at: string;
+  stage: TelemetryStage;
+  call_type: string;
+  provider: string;
+  model: string;
+  ok: boolean;
+  failure_kind: string | null;
+  error: string | null;
+  latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  /** `null` = KHÔNG biết giá (model lạ / gateway tự host), khác hẳn 0 = miễn phí. */
+  cost_usd: number | null;
+  cost_source: string;
+  actor: string | null;
+  source_id: string | null;
+  document_id: string | null;
+  job_id: string | null;
+  thread_id: string | null;
+}
+
+export interface TelemetryAgentEvent {
+  id: string;
+  at: string;
+  kind: "knowledge_call" | "delegation" | string;
+  actor: string;
+  transport: string;
+  tool: string | null;
+  query: string | null;
+  model: string | null;
+  ok: boolean;
+  latency_ms: number;
+  result_count: number;
+  result_chars: number;
+  detail: Record<string, unknown>;
+  error: string | null;
+}
+
+export interface TelemetryTotals {
+  calls: number;
+  ok_calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  priced_calls: number;
+  unpriced_calls: number;
+}
+
+export interface TelemetryBucket extends TelemetryTotals {
+  key: string;
+  provider?: string;
+}
+
+export interface TelemetryDayBucket {
+  key: string;
+  calls: number;
+  total_tokens: number;
+  cost_usd: number;
+  priced_calls: number;
+}
+
+export interface TelemetrySummary {
+  days: number;
+  since: string;
+  retention_days: number;
+  enabled: boolean;
+  totals: TelemetryTotals;
+  by_stage: TelemetryBucket[];
+  by_model: TelemetryBucket[];
+  by_day: TelemetryDayBucket[];
+  agent: {
+    by_kind: { key: string; count: number; results: number; failed: number }[];
+    by_tool: { key: string; count: number; results: number }[];
+    by_actor: { key: string; count: number }[];
+  };
+}
+
+export interface TelemetryPage<T> {
+  total: number;
+  items: T[];
+}
+
 export interface ModelConfig {
   llm_providers: LLMProviderEntry[];
   /** Ảnh chiếu của entry đầu chuỗi — chỉ để hiển thị "đang dùng gì". */

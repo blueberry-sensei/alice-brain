@@ -17,6 +17,8 @@ from sag_api.core.config import settings
 from sag_api.core.db import SessionLocal
 from sag_api.core.errors import NotFoundError
 from sag_api.core.logging import get_logger
+from sag_api.core.telemetry import STAGE_EXTRACTION
+from sag_api.core.telemetry import use_context as use_telemetry_context
 from sag_api.db.models import Document, Job, Source
 from sag_api.enums import DocumentStatus, JobType
 from sag_api.jobs.control import JobPaused
@@ -86,6 +88,8 @@ async def process_document(
                 return True
             return bool((current_job.payload or {}).get("pause_requested"))
 
+    # Ngữ cảnh telemetry: mọi lời gọi LLM/embedding sinh ra bên dưới (kể cả bên trong
+    # alicecore) mang theo document/source/job này, nhờ contextvars — không phải truyền tay.
     try:
         prepared = None
         if not checkpoint.chunk_ids:
@@ -95,17 +99,24 @@ async def process_document(
                 state=(job.payload or {}).get("document_parser"),
                 on_state=on_parser_state,
             )
-        outcome = await engine_manager.process_document(
-            source.sag_source_config_id,
-            str(prepared.path) if prepared is not None else None,
-            source=source,
-            on_stage=on_stage,
-            checkpoint=checkpoint,
-            on_checkpoint=on_checkpoint,
-            should_pause=should_pause,
-            max_concurrency=settings.document_extract_concurrency,
-            document_title=Path(document.filename).stem.strip(),
-        )
+        with use_telemetry_context(
+            stage=STAGE_EXTRACTION,
+            actor="ingest",
+            document_id=document.id,
+            source_id=source.id,
+            job_id=job.id,
+        ):
+            outcome = await engine_manager.process_document(
+                source.sag_source_config_id,
+                str(prepared.path) if prepared is not None else None,
+                source=source,
+                on_stage=on_stage,
+                checkpoint=checkpoint,
+                on_checkpoint=on_checkpoint,
+                should_pause=should_pause,
+                max_concurrency=settings.document_extract_concurrency,
+                document_title=Path(document.filename).stem.strip(),
+            )
         if outcome.paused:
             document.status = DocumentStatus.PAUSED
             document.error = None
