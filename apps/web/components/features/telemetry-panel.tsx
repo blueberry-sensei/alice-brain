@@ -194,13 +194,22 @@ function AgentEventList({
     <ScrollArea className="h-80">
       <ul className="divide-y">
         {events.map((event) => {
-          const detail = event.detail as { preview?: string; status?: string; note?: string };
+          const detail = event.detail as {
+            preview?: string;
+            status?: string;
+            note?: string;
+            created_count?: number;
+            updated_count?: number;
+            deleted_count?: number;
+          };
           const kind =
             event.kind === "delegation"
               ? "delegation"
               : event.kind === "sub_agent_registry"
                 ? "registry"
-                : "knowledge";
+                : event.kind === "knowledge_write"
+                  ? "write"
+                  : "knowledge";
           return (
             <li key={event.id} className="flex flex-col gap-1 p-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -231,6 +240,14 @@ function AgentEventList({
                       chars: event.result_chars,
                     })}
                   </span>
+                ) : event.kind === "knowledge_write" ? (
+                  <span>
+                    {t("writeSummary", {
+                      created: detail.created_count ?? 0,
+                      updated: detail.updated_count ?? 0,
+                      deleted: detail.deleted_count ?? 0,
+                    })}
+                  </span>
                 ) : (
                   <>
                     {detail.status && <span>{detail.status}</span>}
@@ -256,7 +273,7 @@ function AgentEventList({
  *
  * Hai câu hỏi trang này trả lời: **tinh luyện tốn bao nhiêu** (token + chi phí từng lời gọi
  * LLM, chia theo stage/model/ngày), và **agent đã lấy tri thức gì qua brain** (mỗi lần gọi
- * tool MCP, cùng những lần agent tự khai đã giao việc cho sub-agent).
+ * tool MCP, các diff đã sync vào Brain, cùng những lần giao việc cho sub-agent).
  */
 export function TelemetryPanel() {
   const t = useTranslations("Telemetry");
@@ -303,8 +320,9 @@ export function TelemetryPanel() {
   }, [load, t]);
 
   const totals = summary?.totals;
-  const knowledgeCalls =
-    summary?.agent.by_kind.find((row) => row.key === "knowledge_call")?.count ?? 0;
+  const knowledgeActivity = (summary?.agent.by_kind ?? [])
+    .filter((row) => row.key === "knowledge_call" || row.key === "knowledge_write")
+    .reduce((total, row) => total + row.count, 0);
   const delegations = summary?.agent.by_kind.find((row) => row.key === "delegation")?.count ?? 0;
 
   return (
@@ -377,7 +395,7 @@ export function TelemetryPanel() {
                   <StatCard
                     icon={Bot}
                     label={t("agentActivity")}
-                    value={String(knowledgeCalls)}
+                    value={String(knowledgeActivity)}
                     hint={t("delegationHint", { count: delegations })}
                   />
                 </div>

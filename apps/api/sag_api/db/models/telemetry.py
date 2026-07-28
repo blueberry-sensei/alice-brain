@@ -25,9 +25,7 @@ class LLMCall(IDMixin, Base):
         Index("ix_llm_calls_document", "document_id"),
     )
 
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now(), nullable=False, index=True
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), nullable=False, index=True)
     #: extraction | generation | embedding | probe | other — vùng nghiệp vụ đã gọi
     stage: Mapped[str] = mapped_column(String(24), default="generation", index=True)
     #: acompletion | aembedding | … (call_type của litellm)
@@ -59,15 +57,13 @@ class LLMCall(IDMixin, Base):
 
 
 class AgentEvent(IDMixin, Base):
-    """Một lần agent làm việc **qua** brain: gọi tool tri thức, hoặc báo đã giao việc cho sub-agent."""
+    """Một lần agent làm việc **qua** brain: đọc/ghi tri thức, hoặc giao việc cho sub-agent."""
 
     __tablename__ = "agent_events"
     __table_args__ = (Index("ix_agent_events_created_kind", "created_at", "kind"),)
 
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now(), nullable=False, index=True
-    )
-    #: knowledge_call (agent lấy tri thức) | delegation (agent giao việc cho sub-agent)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), nullable=False, index=True)
+    #: knowledge_call | knowledge_write | sub_agent_registry | delegation
     kind: Mapped[str] = mapped_column(String(24), default="knowledge_call", index=True)
     #: Ai gọi: nhãn client MCP (claude-code, codex…), "agent" cho vòng chạy nội bộ
     actor: Mapped[str] = mapped_column(String(120), default="unknown")

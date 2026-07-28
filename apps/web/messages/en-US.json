@@ -1216,7 +1216,7 @@
   },
   "Telemetry": {
     "title": "Telemetry",
-    "description": "Where the money and the knowledge go: every LLM request with its tokens and cost, and every time an agent pulled knowledge through this brain.",
+    "description": "Where the money and the knowledge go: every LLM request with its tokens and cost, every knowledge lookup, and every sync that wrote knowledge into this brain.",
     "range": "{days, plural, one {# day} other {# days}}",
     "refresh": "Refresh",
     "clear": "Clear",
@@ -1224,7 +1224,7 @@
     "totalCost": "Cost",
     "totalTokens": "Tokens",
     "totalCalls": "LLM requests",
-    "agentActivity": "Knowledge calls",
+    "agentActivity": "Knowledge activity",
     "tokensInOut": "in {input} · out {output}",
     "costUnknown": "price unknown",
     "unpricedHint": "{count, plural, one {# request has no price table} other {# requests have no price table}}",
@@ -1243,6 +1243,7 @@
     "noCalls": "No LLM request recorded yet.",
     "noEvents": "No agent activity recorded yet.",
     "resultSummary": "{count} results · {chars} characters",
+    "writeSummary": "+{created} created · ~{updated} updated · -{deleted} deleted",
     "columnStage": "Stage",
     "columnModel": "Model",
     "columnCalls": "Requests",
@@ -1256,6 +1257,7 @@
     },
     "kind": {
       "knowledge": "Knowledge",
+      "write": "Knowledge write",
       "delegation": "Delegation",
       "registry": "Sub-agent registry"
     }

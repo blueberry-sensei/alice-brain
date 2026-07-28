@@ -91,7 +91,7 @@ class LLMCallRecord:
 
 @dataclass
 class AgentEventRecord:
-    """Một lần agent làm việc qua brain: lấy tri thức, hoặc giao việc cho sub-agent."""
+    """Một lần agent làm việc qua brain: đọc/ghi tri thức, hoặc giao việc cho sub-agent."""
 
     kind: str = "knowledge_call"
     actor: str = "unknown"
@@ -147,12 +147,14 @@ async def emit_llm_call(record: LLMCallRecord) -> None:
         log.warning("Failed to record an LLM call: %s", error)
 
 
-async def emit_agent_event(record: AgentEventRecord) -> None:
-    """Gửi bản ghi hoạt động của agent. Cùng nguyên tắc: không bao giờ ném lỗi ra ngoài."""
+async def emit_agent_event(record: AgentEventRecord) -> bool:
+    """Gửi bản ghi hoạt động; trả False khi không có sink hoặc tầng ghi thất bại."""
     sink = _agent_sink
     if sink is None:
-        return
+        return False
     try:
         await sink(record)
+        return True
     except Exception as error:  # noqa: BLE001
         log.warning("Failed to record an agent event: %s", error)
+        return False

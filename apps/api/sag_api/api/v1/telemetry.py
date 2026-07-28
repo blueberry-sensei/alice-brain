@@ -9,11 +9,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sag_api.core.config import settings
 from sag_api.core.db import get_session
 from sag_api.core.deps import get_current_user
 from sag_api.core.telemetry import AgentEventRecord, emit_agent_event
 from sag_api.db.models import User
-from sag_api.schemas.telemetry import AgentTaskLogRequest
+from sag_api.schemas.telemetry import AgentTaskLogRequest, KnowledgeSyncLogRequest
 from sag_api.services import telemetry_service
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
@@ -65,7 +66,7 @@ async def log_agent_task(
     Dành cho orchestrator có sẵn token HTTP (script CI, agent không cắm MCP). Số token và
     chi phí ở đây là **do agent khai**, brain không đo được sub-agent chạy ngoài máy.
     """
-    await emit_agent_event(
+    recorded = settings.telemetry_enabled and await emit_agent_event(
         AgentEventRecord(
             kind="delegation",
             actor=body.actor or "api",
@@ -84,7 +85,55 @@ async def log_agent_task(
             },
         )
     )
-    return {"ok": True}
+    return {"ok": recorded}
+
+
+@router.post("/knowledge-sync", status_code=201)
+async def log_knowledge_sync(
+    body: KnowledgeSyncLogRequest,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Ghi đúng diff mà sync đã nhận; không có thay đổi thì không tạo event nhiễu."""
+    changed = len(body.created) + len(body.updated) + len(body.deleted)
+    if changed == 0:
+        return {"ok": True, "recorded": False}
+
+    lines = [
+        *[f"+ {path[:500]}" for path in body.created],
+        *[f"~ {path[:500]}" for path in body.updated],
+        *[f"- {path[:500]}" for path in body.deleted],
+    ]
+    preview = "\n".join(lines[:50])
+    if len(lines) > 50:
+        preview += f"\n... and {len(lines) - 50} more"
+
+    recorded = settings.telemetry_enabled and await emit_agent_event(
+        AgentEventRecord(
+            kind="knowledge_write",
+            actor=body.actor,
+            transport="http",
+            tool="sync",
+            query=body.source_name,
+            ok=True,
+            result_count=changed,
+            result_chars=sum(len(path) for path in body.created + body.updated + body.deleted),
+            detail={
+                "status": "done",
+                "source_id": body.source_id,
+                "source_name": body.source_name,
+                "created": body.created,
+                "updated": body.updated,
+                "deleted": body.deleted,
+                "created_count": len(body.created),
+                "updated_count": len(body.updated),
+                "deleted_count": len(body.deleted),
+                "skipped_count": body.skipped,
+                "rebuild": body.rebuild,
+                "preview": preview,
+            },
+        )
+    )
+    return {"ok": recorded, "recorded": recorded}
 
 
 @router.delete("")

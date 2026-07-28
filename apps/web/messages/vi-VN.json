@@ -1216,7 +1216,7 @@
   },
   "Telemetry": {
     "title": "Telemetry",
-    "description": "Tiền và tri thức đi đâu: mọi request LLM kèm token và chi phí, cùng mọi lần agent lấy tri thức qua não này.",
+    "description": "Tiền và tri thức đi đâu: mọi request LLM kèm token và chi phí, mọi lượt tra cứu, cùng mọi lần sync ghi tri thức vào não này.",
     "range": "{days, plural, other {# ngày}}",
     "refresh": "Tải lại",
     "clear": "Xoá sạch",
@@ -1224,7 +1224,7 @@
     "totalCost": "Chi phí",
     "totalTokens": "Token",
     "totalCalls": "Request LLM",
-    "agentActivity": "Lượt lấy tri thức",
+    "agentActivity": "Hoạt động tri thức",
     "tokensInOut": "vào {input} · ra {output}",
     "costUnknown": "chưa biết giá",
     "unpricedHint": "{count, plural, other {# request không có bảng giá}}",
@@ -1243,6 +1243,7 @@
     "noCalls": "Chưa ghi được request LLM nào.",
     "noEvents": "Chưa ghi được hoạt động agent nào.",
     "resultSummary": "{count} kết quả · {chars} ký tự",
+    "writeSummary": "+{created} tạo · ~{updated} cập nhật · -{deleted} xoá",
     "columnStage": "Giai đoạn",
     "columnModel": "Model",
     "columnCalls": "Lượt gọi",
@@ -1256,6 +1257,7 @@
     },
     "kind": {
       "knowledge": "Tri thức",
+      "write": "Ghi tri thức",
       "delegation": "Giao việc",
       "registry": "Registry sub-agent"
     }

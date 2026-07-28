@@ -238,7 +238,7 @@ export interface TelemetryLLMCall {
 export interface TelemetryAgentEvent {
   id: string;
   at: string;
-  kind: "knowledge_call" | "delegation" | string;
+  kind: "knowledge_call" | "knowledge_write" | "sub_agent_registry" | "delegation" | string;
   actor: string;
   transport: string;
   tool: string | null;

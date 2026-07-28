@@ -16,9 +16,7 @@ from sag_api.mcp.server import build_source_mcp, use_scope
 
 
 async def _register(client: httpx.AsyncClient, email: str) -> dict:
-    response = await client.post(
-        "/api/v1/auth/register", json={"email": email, "password": "password123"}
-    )
+    response = await client.post("/api/v1/auth/register", json={"email": email, "password": "password123"})
     assert response.status_code == 201, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
@@ -197,9 +195,7 @@ def test_embedding_telemetry_gracefully_handles_older_engine(monkeypatch):
     embedding_telemetry.install_engine_embedding_telemetry()
     embedding_telemetry.uninstall_engine_embedding_telemetry()
 
-    assert warnings == [
-        "This alicecore build does not report embedding usage; embedding cost stays out of telemetry"
-    ]
+    assert warnings == ["This alicecore build does not report embedding usage; embedding cost stays out of telemetry"]
 
 
 @pytest.mark.asyncio
@@ -264,9 +260,7 @@ async def test_knowledge_calls_and_delegation_are_logged(monkeypatch):
             source = (await client.post("/api/v1/sources", headers=headers, json={"name": "T"})).json()
             async with SessionLocal() as session:
                 sources = tuple(
-                    (await session.execute(select(Source).where(Source.id == source["id"])))
-                    .scalars()
-                    .all()
+                    (await session.execute(select(Source).where(Source.id == source["id"]))).scalars().all()
                 )
 
             mcp = build_source_mcp()
@@ -303,25 +297,19 @@ async def test_knowledge_calls_and_delegation_are_logged(monkeypatch):
             assert knowledge["transport"] == "stdio"
             assert knowledge["result_chars"] > 0
 
-            registry = next(
-                item for item in events["items"] if item["kind"] == "sub_agent_registry"
-            )
+            registry = next(item for item in events["items"] if item["kind"] == "sub_agent_registry")
             assert registry["tool"] == "list_sub_agents"
             assert registry["result_count"] == 1
 
             managed = next(
-                item
-                for item in events["items"]
-                if item["kind"] == "delegation" and item["tool"] == "opencode-zen"
+                item for item in events["items"] if item["kind"] == "delegation" and item["tool"] == "opencode-zen"
             )
             assert managed["model"] == "opencode/deepseek-v4-flash-free"
             assert managed["detail"]["execution_source"] == "brain"
             assert managed["detail"]["note"] == "Keep ownership server-trusted."
 
             delegation = next(
-                item
-                for item in events["items"]
-                if item["kind"] == "delegation" and item["tool"] == "opencode-go"
+                item for item in events["items"] if item["kind"] == "delegation" and item["tool"] == "opencode-go"
             )
             assert delegation["model"] == "grok-code"
             assert delegation["detail"]["status"] == "done"
@@ -382,12 +370,16 @@ async def test_stdio_server_installs_its_own_telemetry_store(monkeypatch):
 
     async with SessionLocal() as session:
         events = (
-            await session.execute(
-                select(AgentEvent)
-                .where(AgentEvent.actor == "stdio-regression")
-                .order_by(AgentEvent.created_at.desc())
+            (
+                await session.execute(
+                    select(AgentEvent)
+                    .where(AgentEvent.actor == "stdio-regression")
+                    .order_by(AgentEvent.created_at.desc())
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert len(events) == 2
     knowledge = next(event for event in events if event.kind == "knowledge_call")
     delegation = next(event for event in events if event.kind == "delegation")
@@ -412,7 +404,65 @@ async def test_delegation_can_be_logged_over_http():
                 json={"agent": "codex", "task": "write migration", "status": "failed"},
             )
             assert created.status_code == 201
-            events = (
-                await client.get("/api/v1/telemetry/agent-events?kind=delegation", headers=headers)
-            ).json()
+            events = (await client.get("/api/v1/telemetry/agent-events?kind=delegation", headers=headers)).json()
             assert any(item["tool"] == "codex" and item["ok"] is False for item in events["items"])
+
+
+@pytest.mark.asyncio
+async def test_successful_knowledge_sync_is_logged_with_its_diff():
+    from sag_api.main import app
+
+    transport = httpx.ASGITransport(app=app)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            headers = await _register(client, "telemetry-sync@t.com")
+            await client.request("DELETE", "/api/v1/telemetry", headers=headers)
+
+            created = await client.post(
+                "/api/v1/telemetry/knowledge-sync",
+                headers=headers,
+                json={
+                    "actor": "alice-sync",
+                    "source_id": "source-1",
+                    "source_name": "passport-knowledge",
+                    "created": ["mistakes/M-0013.md"],
+                    "updated": ["wiki/hotel-booking.md", "decisions/LOG.md"],
+                    "deleted": [],
+                    "skipped": 31,
+                },
+            )
+            assert created.status_code == 201
+            assert created.json() == {"ok": True, "recorded": True}
+
+            events = (
+                await client.get(
+                    "/api/v1/telemetry/agent-events?kind=knowledge_write",
+                    headers=headers,
+                )
+            ).json()
+            assert events["total"] == 1
+            event = events["items"][0]
+            assert (event["actor"], event["tool"], event["query"]) == (
+                "alice-sync",
+                "sync",
+                "passport-knowledge",
+            )
+            assert event["result_count"] == 3
+            assert event["detail"]["created_count"] == 1
+            assert event["detail"]["updated_count"] == 2
+            assert event["detail"]["deleted_count"] == 0
+            assert event["detail"]["skipped_count"] == 31
+            assert "+ mistakes/M-0013.md" in event["detail"]["preview"]
+            assert "~ wiki/hotel-booking.md" in event["detail"]["preview"]
+
+            noop = await client.post(
+                "/api/v1/telemetry/knowledge-sync",
+                headers=headers,
+                json={
+                    "source_id": "source-1",
+                    "source_name": "passport-knowledge",
+                    "skipped": 34,
+                },
+            )
+            assert noop.status_code == 201
+            assert noop.json() == {"ok": True, "recorded": False}
