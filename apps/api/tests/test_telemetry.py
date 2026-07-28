@@ -141,9 +141,13 @@ async def test_embedding_usage_reaches_telemetry():
 
     from sag_api.core.telemetry import LLMCallRecord, set_llm_call_sink
     from sag_api.sag.embedding_telemetry import (
+        embedding_telemetry_supported,
         install_engine_embedding_telemetry,
         uninstall_engine_embedding_telemetry,
     )
+
+    if not embedding_telemetry_supported():
+        pytest.skip("alicecore build without an embedding usage sink")
 
     captured: list[LLMCallRecord] = []
 
@@ -176,6 +180,26 @@ async def test_embedding_usage_reaches_telemetry():
     assert record.document_id == "doc-emb"
     # Endpoint embedding tự cấu hình không có bảng giá → "chưa biết", không phải miễn phí.
     assert record.cost_usd is None
+
+
+def test_embedding_telemetry_gracefully_handles_older_engine(monkeypatch):
+    from sag_api.sag import embedding_telemetry
+
+    warnings: list[str] = []
+    monkeypatch.setattr(embedding_telemetry, "set_embedding_usage_sink", None)
+    monkeypatch.setattr(
+        embedding_telemetry.log,
+        "warning",
+        lambda message, *_args, **_kwargs: warnings.append(message),
+    )
+
+    assert embedding_telemetry.embedding_telemetry_supported() is False
+    embedding_telemetry.install_engine_embedding_telemetry()
+    embedding_telemetry.uninstall_engine_embedding_telemetry()
+
+    assert warnings == [
+        "This alicecore build does not report embedding usage; embedding cost stays out of telemetry"
+    ]
 
 
 @pytest.mark.asyncio
