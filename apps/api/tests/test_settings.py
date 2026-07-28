@@ -1,7 +1,7 @@
-"""模型配置端点：GET 脱敏、PUT 持久化+生效、密钥保留、非法值 422、连接测试（离线）。
+"""The model configuration endpoints: a masked GET, a PUT that persists and takes effect, secret retention, 422 on an invalid value, the connection test (offline).
 
-全程离线且**不留全局副作用**：`finally` 删除 settings 表行 + 还原被改的 `settings` 单例字段，
-避免跨测试泄漏（端点会就地覆盖进程级单例）。连接测试只验证「未配置」分支（无网络）。
+Fully offline and **leaving no global side effect**: `finally` deletes the settings table rows and restores the `settings` singleton fields that were changed,
+so nothing leaks across tests (the endpoint overrides the process-level singleton in place). The connection test only exercises the "not configured" branch (no network).
 """
 
 import httpx
@@ -50,14 +50,62 @@ def test_legacy_atomic_env_strategy_maps_to_precise(monkeypatch):
     assert Settings(_env_file=None).search_strategy == "multi"
 
 
-def test_timezone_defaults_to_beijing_and_rejects_invalid(monkeypatch):
+def test_timezone_defaults_to_utc_and_rejects_invalid(monkeypatch):
     monkeypatch.delenv("SAG_TIMEZONE", raising=False)
-    assert Settings(_env_file=None).timezone == "Asia/Shanghai"
+    assert Settings(_env_file=None).timezone == "UTC"
     monkeypatch.setenv("SAG_TIMEZONE", "UTC")
     assert Settings(_env_file=None).timezone == "UTC"
     monkeypatch.setenv("SAG_TIMEZONE", "Mars/Olympus")
     with pytest.raises(ValueError):
         Settings(_env_file=None)
+
+
+@pytest.mark.asyncio
+async def test_system_preferences_persist_timezone_and_report_configuration():
+    from sqlalchemy import delete
+
+    from sag_api.core.db import SessionLocal, init_db
+    from sag_api.db.models import Setting
+    from sag_api.services.settings_service import (
+        get_system_preferences,
+        save_system_preferences,
+    )
+
+    await init_db()
+    previous = settings.timezone
+    try:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(Setting).where(
+                    Setting.scope == "global",
+                    Setting.key == "system_preferences",
+                )
+            )
+            await session.commit()
+            settings.timezone = "UTC"
+
+            initial = await get_system_preferences(session)
+            assert initial == {"timezone": "UTC", "timezone_configured": False}
+
+            saved = await save_system_preferences(
+                session,
+                {"timezone": "Asia/Ho_Chi_Minh"},
+            )
+            assert saved == {
+                "timezone": "Asia/Ho_Chi_Minh",
+                "timezone_configured": True,
+            }
+            assert await get_system_preferences(session) == saved
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(Setting).where(
+                    Setting.scope == "global",
+                    Setting.key == "system_preferences",
+                )
+            )
+            await session.commit()
+        settings.timezone = previous
 
 
 def test_provider_base_urls_have_no_third_party_default(monkeypatch):
@@ -125,6 +173,197 @@ async def _register(c, email):
 
 
 @pytest.mark.asyncio
+async def test_sub_agent_config_live_models_and_encrypted_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sqlalchemy import delete, select
+
+    from sag_api.api.v1 import system as system_api
+    from sag_api.core.errors import ValidationError
+    from sag_api.core.db import SessionLocal
+    from sag_api.db.models import Setting
+    from sag_api.main import app
+
+    observed: list[tuple[str, str]] = []
+
+    async def fake_discovery(provider: str, credential: str) -> list[str]:
+        observed.append((provider, credential))
+        if credential == "bad-key":
+            raise ValidationError("invalid", code="sub_agent_credential_invalid")
+        return {
+            "claude": ["claude-live-a", "claude-live-b"],
+            "codex": ["gpt-live"],
+            "opencode-go": ["opencode-go/live"],
+            "opencode-zen": ["opencode/live"],
+            "gemini-cli": ["gemini-live"],
+        }[provider]
+
+    monkeypatch.setattr(system_api, "discover_sub_agent_models", fake_discovery)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+                auth = await _register(c, "subagents@t.com")
+
+                initial = await c.get("/api/v1/system/sub-agent-config", headers=auth)
+                assert initial.status_code == 200
+                assert [item["id"] for item in initial.json()["providers"]] == [
+                    "claude",
+                    "codex",
+                    "opencode-go",
+                    "opencode-zen",
+                    "gemini-cli",
+                    "custom",
+                ]
+                assert all("models" not in item for item in initial.json()["providers"])
+                assert all("default_model" not in item for item in initial.json()["providers"])
+                assert initial.json()["entries"] == []
+
+                missing_key = await c.post(
+                    "/api/v1/system/sub-agent-config/models",
+                    headers=auth,
+                    json={"provider": "claude"},
+                )
+                assert missing_key.status_code == 400
+                assert missing_key.json()["error"]["code"] == "sub_agent_credential_required"
+
+                invalid_key = await c.post(
+                    "/api/v1/system/sub-agent-config/models",
+                    headers=auth,
+                    json={"provider": "claude", "credential": "bad-key"},
+                )
+                assert invalid_key.status_code == 422
+                assert invalid_key.json()["error"]["code"] == "sub_agent_credential_invalid"
+
+                live = await c.post(
+                    "/api/v1/system/sub-agent-config/models",
+                    headers=auth,
+                    json={"provider": "claude", "credential": "claude-secret"},
+                )
+                assert live.status_code == 200
+                assert live.json()["models"] == ["claude-live-a", "claude-live-b"]
+
+                custom_discovery = await c.post(
+                    "/api/v1/system/sub-agent-config/models",
+                    headers=auth,
+                    json={"provider": "custom", "credential": "custom-secret"},
+                )
+                assert custom_discovery.status_code == 422
+
+                unavailable_model = await c.put(
+                    "/api/v1/system/sub-agent-config",
+                    headers=auth,
+                    json={
+                        "entries": [
+                            {
+                                "provider": "claude",
+                                "model": "model-tu-nhap",
+                                "credential": "claude-secret",
+                                "enabled": True,
+                            }
+                        ]
+                    },
+                )
+                assert unavailable_model.status_code == 422
+                assert (
+                    unavailable_model.json()["error"]["code"]
+                    == "sub_agent_model_not_available"
+                )
+
+                saved = await c.put(
+                    "/api/v1/system/sub-agent-config",
+                    headers=auth,
+                    json={
+                        "entries": [
+                            {
+                                "provider": "claude",
+                                "model": "claude-live-a",
+                                "credential": "claude-secret",
+                                "enabled": True,
+                            },
+                            {
+                                "provider": "custom",
+                                "provider_name": "Internal coding agent",
+                                "model": "private-code-model",
+                                "base_url": "https://models.example/v1",
+                                "credential": "custom-secret",
+                                "enabled": True,
+                            },
+                        ]
+                    },
+                )
+                assert saved.status_code == 200, saved.text
+                entries = saved.json()["entries"]
+                assert all(entry["credential_set"] is True for entry in entries)
+                assert next(
+                    entry for entry in entries if entry["provider"] == "claude"
+                )["model_verified"] is True
+                assert all("credential" not in entry for entry in entries)
+                assert "claude-secret" not in saved.text
+                assert "custom-secret" not in saved.text
+
+                async with SessionLocal() as probe:
+                    row = await probe.scalar(
+                        select(Setting).where(
+                            Setting.scope == "global",
+                            Setting.key == "sub_agent_config",
+                        )
+                    )
+                assert row is not None
+                stored = row.value["entries"]
+                assert all(entry["credential"].startswith("enc:v1:") for entry in stored)
+                assert all("secret" not in entry["credential"] for entry in stored)
+
+                reused = await c.post(
+                    "/api/v1/system/sub-agent-config/models",
+                    headers=auth,
+                    json={"provider": "claude"},
+                )
+                assert reused.status_code == 200
+                assert observed[-1] == ("claude", "claude-secret")
+
+                kept = await c.put(
+                    "/api/v1/system/sub-agent-config",
+                    headers=auth,
+                    json={
+                        "entries": [
+                            {
+                                "provider": "claude",
+                                "model": "claude-live-b",
+                                "credential": "",
+                                "enabled": True,
+                            },
+                            {
+                                "provider": "custom",
+                                "provider_name": "Internal coding agent",
+                                "model": "private-code-model-v2",
+                                "base_url": "https://other.example/v1",
+                                "credential": "",
+                                "enabled": True,
+                            },
+                        ]
+                    },
+                )
+                assert kept.status_code == 200
+                by_provider = {
+                    entry["provider"]: entry for entry in kept.json()["entries"]
+                }
+                assert by_provider["claude"]["credential_set"] is True
+                assert by_provider["claude"]["model_verified"] is True
+                # Custom đổi endpoint mà không nhập key mới: không được gửi key cũ sang host mới.
+                assert by_provider["custom"]["credential_set"] is False
+    finally:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(Setting).where(
+                    Setting.scope == "global",
+                    Setting.key == "sub_agent_config",
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
 async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatch):
     from sqlalchemy import delete
 
@@ -141,6 +380,7 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
 
                 preferences = (await c.get("/api/v1/system/preferences", headers=A)).json()
                 assert preferences["timezone"] == snapshot["timezone"]
+                assert preferences["timezone_configured"] is False
                 changed = await c.put(
                     "/api/v1/system/preferences",
                     headers=A,
@@ -148,6 +388,7 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                 )
                 assert changed.status_code == 200
                 assert changed.json()["timezone"] == "UTC"
+                assert changed.json()["timezone_configured"] is True
                 assert settings.timezone == "UTC"
                 assert (await c.get("/api/v1/system/capabilities")).json()["timezone"] == "UTC"
                 invalid_timezone = await c.put(
@@ -179,7 +420,7 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                 ]
                 assert "litellm_prefix" not in providers[0]
 
-                # 连接测试（未配置）→ 立即 ok False，无网络
+                # The connection test (not configured) -> ok False immediately, no network
                 t = (await c.post("/api/v1/system/model-config/test", headers=A)).json()
                 assert t["ok"] is False and "message" in t
 
@@ -364,7 +605,7 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                     await c.post("/api/v1/system/model-config/test", headers=A)
                 ).json()["ok"] is False
 
-                # 文档解析配置与密钥同样支持持久化、脱敏和即时生效。
+                # The document parsing configuration and the secrets persist, mask and take effect the same way.
                 r = await c.put(
                     "/api/v1/system/model-config",
                     headers=A,
@@ -384,7 +625,7 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
                     )
                 ).status_code == 422
 
-                # 非法值 → 422（Literal / 越界）
+                # An invalid value -> 422 (Literal / out of range)
                 assert (
                     await c.put("/api/v1/system/model-config", headers=A, json={"search_strategy": "nope"})
                 ).status_code == 422

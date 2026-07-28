@@ -16,7 +16,7 @@ class MessageItem(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    """统一写入：文本或一批消息，二选一。"""
+    """Unified write: either a text or a batch of messages, one of the two."""
 
     text: str | None = None
     title: str | None = None
@@ -57,5 +57,5 @@ class DocumentOut(BaseModel):
         if not any(marker in normalized for marker in sql_markers):
             return value
         if "foreign key constraint failed" in normalized:
-            return "信息源初始化未完成，文档尚未入库，请重试。"
-        return "文档入库失败，请重试；若仍失败，请查看服务日志。"
+            return "The source has not finished initialising, so the document is not stored yet; please retry."
+        return "Storing the document failed; please retry, and check the service log if it keeps failing."

@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 
-/** 助手设定 —— 默认 agent 的名字 / 头像 / 开场白 / 系统提示。 */
+/** Assistant persona - the default agent's name / avatar / greeting / system prompt. */
 export function AgentSettingsCard({ compact = false }: { compact?: boolean }) {
   const t = useTranslations("AgentSettings");
   const { agent, replaceAgent } = useApp();

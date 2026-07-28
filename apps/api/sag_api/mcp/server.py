@@ -1,8 +1,8 @@
-"""把 SAG 知识库的检索、实体与原文能力暴露为标准 MCP server。
+"""Expose the SAG knowledge base's retrieval, entity and raw-text capabilities as a standard MCP server.
 
-一个 SAG 实例只构造一个 FastMCP server。每次调用可作用于全部信源，也可以通过
-``source_id`` 收窄到单个信源：HTTP 包装层、进程内 Agent 和 stdio 入口都通过
-``MCPScope`` 注入当前可见信源，工具本身不依赖传输方式。
+A SAG instance builds exactly one FastMCP server. A call may span every source, or be narrowed to a single
+source through ``source_id``: the HTTP wrapper, the in-process agent and the stdio entry point all inject
+the currently visible sources through ``MCPScope``, so the tools themselves do not depend on the transport.
 """
 
 from __future__ import annotations
@@ -35,43 +35,43 @@ class MCPToolDetail(TypedDict):
 MCP_TOOL_DETAILS: tuple[MCPToolDetail, ...] = (
     {
         "name": "list_sources",
-        "label": "查看信源",
-        "description": "查看当前可访问的知识来源、文档数和分块数，并获取 source_id。",
+        "label": "List sources",
+        "description": "Show the knowledge sources you can currently reach with their document and chunk counts, and obtain source_id.",
     },
     {
         "name": "search",
-        "label": "语义检索",
-        "description": "按含义查找相关资料，适合自然语言问题、概念和模糊表述；返回证据片段及 chunk_id。",
+        "label": "Semantic search",
+        "description": "Find related material by meaning; best for natural-language questions, concepts and vague phrasing. Returns evidence snippets and chunk_id.",
     },
     {
         "name": "get_entity",
-        "label": "查询实体",
-        "description": "查找人物、组织或概念，并汇总它在资料中的相关上下文。",
+        "label": "Look up entity",
+        "description": "Find a person, organisation or concept and summarise the context around it in the material.",
     },
     {
         "name": "list_documents",
-        "label": "查看文档",
-        "description": "列出文档、处理状态和分块数量，并获取 document_id。",
+        "label": "List documents",
+        "description": "List documents with their processing status and chunk counts, and obtain document_id.",
     },
     {
         "name": "outline",
-        "label": "文档大纲",
-        "description": "查看指定文档的章节和分块结构，并获取 chunk_id，便于快速定位内容。",
+        "label": "Document outline",
+        "description": "View the section and chunk structure of one document and obtain chunk_id, to locate content quickly.",
     },
     {
         "name": "grep",
-        "label": "精确查找",
-        "description": "按原文字面内容查找，适合专名、编号、固定短语和代码；返回命中上下文及 chunk_id。",
+        "label": "Exact search",
+        "description": "Search the raw text literally; best for proper nouns, identifiers, fixed phrases and code. Returns matching context and chunk_id.",
     },
     {
         "name": "read",
-        "label": "按行读原文",
-        "description": "按行分页读取指定文档的原始文本，适合查看连续上下文。",
+        "label": "Read raw text by line",
+        "description": "Read a document's raw text page by page in line ranges, for following continuous context.",
     },
     {
         "name": "get_chunk",
-        "label": "读取分块",
-        "description": "通过 chunk_id 读取一个分块的完整原文，用于核对和引用证据。",
+        "label": "Read chunk",
+        "description": "Read one chunk's full raw text by chunk_id, to verify and cite evidence.",
     },
 )
 MCP_TOOL_NAMES = tuple(tool["name"] for tool in MCP_TOOL_DETAILS)
@@ -86,18 +86,18 @@ READ_ONLY_TOOL_ANNOTATIONS = ToolAnnotations(
 
 SourceId = Annotated[
     str,
-    Field(description="可选。来自 list_sources；留空时查询全部可见信源。"),
+    Field(description="Optional. Comes from list_sources; leave it empty to query every visible source."),
 ]
-DocumentId = Annotated[str, Field(description="来自 list_documents 的文档 ID。")]
+DocumentId = Annotated[str, Field(description="Document ID from list_documents.")]
 ChunkId = Annotated[
     str,
-    Field(description="来自 search、outline 或 grep 结果的分块 ID。"),
+    Field(description="Chunk ID from a search, outline or grep result."),
 ]
 
 
 @dataclass(frozen=True)
 class MCPScope:
-    """一次 MCP 调用可见的信源及其暖引擎。"""
+    """The sources visible to one MCP call, together with their warm engines."""
 
     engine_manager: EngineManager
     sources: tuple[Source, ...]
@@ -111,13 +111,13 @@ _scope: contextvars.ContextVar[MCPScope | None] = contextvars.ContextVar(
 def _require_scope() -> MCPScope:
     scope = _scope.get()
     if scope is None:
-        raise RuntimeError("MCP 调用缺少知识库作用域")
+        raise RuntimeError("MCP call has no knowledge-base scope")
     return scope
 
 
 @contextlib.contextmanager
 def use_scope(engine_manager: EngineManager, sources: Source | Iterable[Source]):
-    """在上下文内绑定一个信源或一组信源。"""
+    """Bind one source, or a set of sources, inside the context."""
     if hasattr(sources, "sag_source_config_id"):
         selected = (sources,)
     else:
@@ -142,17 +142,17 @@ def _source_title(source: Source) -> str:
 
 def _sections_to_text(sections: list, sources: tuple[Source, ...]) -> str:
     if not sections:
-        return "（无相关资料）"
+        return "(no related material)"
     by_config = {source.sag_source_config_id: source for source in sources}
     by_id = {source.id: source for source in sources}
     blocks = []
     for index, section in enumerate(sections, start=1):
-        heading = getattr(section, "heading", None) or "片段"
+        heading = getattr(section, "heading", None) or "Snippet"
         chunk_id = getattr(section, "chunk_id", None) or ""
         tag = f"（chunk_id={chunk_id}）" if chunk_id else ""
         source = by_config.get(getattr(section, "source_config_id", None))
         source = source or by_id.get(getattr(section, "source_id", None))
-        source_line = f"来源：{_source_title(source)}\n" if source and len(sources) > 1 else ""
+        source_line = f"Source: {_source_title(source)}\n" if source and len(sources) > 1 else ""
         blocks.append(
             f"[{index}] {heading}{tag}\n{source_line}{getattr(section, 'content', '')}"
         )
@@ -178,13 +178,13 @@ def build_source_mcp(
     stateless_http: bool = False,
     transport_security: TransportSecuritySettings | None = None,
 ) -> FastMCP:
-    """构造知识库 MCP server，具体作用域由 contextvar 在请求前注入。"""
+    """Build the knowledge-base MCP server; the actual scope is injected by a contextvar before each request."""
     mcp = FastMCP(
         "sag-knowledge",
         instructions=(
-            "SAG 知识库 MCP：默认检索全部信源，也可向工具传 source_id 限定范围。"
-            "先用 list_sources/list_documents 了解资料范围，再用 search、grep、outline、"
-            "read 和 get_chunk 获取可引用证据。回答请依据 search 返回的编号证据。"
+            "SAG knowledge-base MCP: searches every source by default, or pass source_id to a tool to narrow the scope. "
+            "Start with list_sources/list_documents to learn what material exists, then use search, grep, outline, "
+            "read and get_chunk to collect citable evidence. Base answers on the numbered evidence that search returns."
         ),
         stateless_http=stateless_http,
         transport_security=transport_security,
@@ -198,9 +198,9 @@ def build_source_mcp(
     async def list_sources() -> str:
         scope = _require_scope()
         if not scope.sources:
-            return "（知识库还没有信源）"
+            return "(the knowledge base has no sources yet)"
         return "\n".join(
-            f"- {_source_title(source)} · {source.document_count} 文档 · {source.chunk_count} 分块"
+            f"- {_source_title(source)} - {source.document_count} documents - {source.chunk_count} chunks"
             for source in scope.sources
         )
 
@@ -210,20 +210,20 @@ def build_source_mcp(
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
     async def search(
-        query: Annotated[str, Field(description="要查找的问题、主题或关键词。")],
+        query: Annotated[str, Field(description="The question, topic or keywords to look for.")],
         top_k: Annotated[
             int,
-            Field(description="最多返回多少条证据；默认 8，服务端会限制在 1–50。"),
+            Field(description="How many pieces of evidence to return at most; defaults to 8, the server clamps it to 1-50."),
         ] = 8,
         source_id: SourceId = "",
     ) -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
-            return "（没有可检索的信源）" if not source_id else "（信源不存在或不在当前作用域）"
+            return "(no searchable source)" if not source_id else "(source does not exist or is outside the current scope)"
         normalized = (query or "").strip()
         if not normalized:
-            return "（空查询）"
+            return "(empty query)"
         outcome = await retrieve_relevant_sections(
             scope.engine_manager,
             selected,
@@ -240,17 +240,17 @@ def build_source_mcp(
     async def get_entity(
         name: Annotated[
             str,
-            Field(description="人物、组织、概念等实体名称；支持完整名称或部分名称。"),
+            Field(description="Entity name such as a person, organisation or concept; a full or partial name both work."),
         ],
         source_id: SourceId = "",
     ) -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
-            return "（没有可查询的信源）" if not source_id else "（信源不存在或不在当前作用域）"
+            return "(no queryable source)" if not source_id else "(source does not exist or is outside the current scope)"
         target = (name or "").strip()
         if not target:
-            return "（未找到该实体）"
+            return "(entity not found)"
 
         async def _one(source: Source) -> str | None:
             try:
@@ -278,14 +278,14 @@ def build_source_mcp(
                     scid, match.id, source=source, limit=6
                 )
                 body = "\n\n".join(snippets) if snippets else (match.description or "")
-                prefix = f"来源：{_source_title(source)}\n" if len(selected) > 1 else ""
-                return f"{prefix}实体「{match.name}」（{match.type}）：\n{body}".strip()
+                prefix = f"Source: {_source_title(source)}\n" if len(selected) > 1 else ""
+                return f"{prefix}Entity \"{match.name}\" ({match.type}):\n{body}".strip()
             except Exception:
                 return None
 
         results = await asyncio.gather(*(_one(source) for source in selected))
         matches = [result for result in results if result]
-        return "\n\n".join(matches) if matches else "（未找到该实体）"
+        return "\n\n".join(matches) if matches else "(entity not found)"
 
     @mcp.tool(
         title=MCP_TOOL_LABELS["list_documents"],
@@ -296,7 +296,7 @@ def build_source_mcp(
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
-            return "（知识库还没有信源）" if not source_id else "（信源不存在或不在当前作用域）"
+            return "(the knowledge base has no sources yet)" if not source_id else "(source does not exist or is outside the current scope)"
         from sqlalchemy import select
 
         from sag_api.core.db import SessionLocal
@@ -316,7 +316,7 @@ def build_source_mcp(
                 .all()
             )
         if not documents:
-            return "（知识库还没有文档）"
+            return "(the knowledge base has no documents yet)"
         by_source: dict[str, list[Document]] = {item.id: [] for item in selected}
         for document in documents:
             by_source.setdefault(document.source_id, []).append(document)
@@ -330,7 +330,7 @@ def build_source_mcp(
                 status = getattr(document.status, "value", document.status)
                 lines.append(
                     f"- {document.filename} · id={document.id} · {status} · "
-                    f"{document.chunk_count} 分块"
+                    f"{document.chunk_count} chunks"
                 )
             header = f"## {_source_title(source)}\n" if len(selected) > 1 else ""
             blocks.append(header + "\n".join(lines))
@@ -345,19 +345,19 @@ def build_source_mcp(
         scope = _require_scope()
         match = await _document_in_scope(scope, document_id)
         if match is None:
-            return "（未找到该文档）"
+            return "(document not found)"
         document, source = match
         if not document.sag_source_id:
-            return "（尚无大纲：文档可能仍在处理中）"
+            return "(no outline yet: the document may still be processing)"
         rows = await scope.engine_manager.list_chunk_headings(
             source.sag_source_config_id,
             source=source,
             doc_sag_id=document.sag_source_id,
         )
         if not rows:
-            return "（尚无大纲：文档可能仍在处理中）"
+            return "(no outline yet: the document may still be processing)"
         return "\n".join(
-            f"{row['rank']:>3}. {row['heading'] or '（无标题分块）'}"
+            f"{row['rank']:>3}. {row['heading'] or '(untitled chunk)'}"
             f"（chunk_id={row['chunk_id']}）"
             for row in rows
         )
@@ -370,21 +370,21 @@ def build_source_mcp(
     async def grep(
         pattern: Annotated[
             str,
-            Field(description="要在原文中精确查找的文字；适合专名、编号、固定短语和代码。"),
+            Field(description="Text to match literally in the raw content; best for proper nouns, identifiers, fixed phrases and code."),
         ],
         limit: Annotated[
             int,
-            Field(description="最多返回多少处匹配；默认 20，服务端会限制在 1–100。"),
+            Field(description="How many matches to return at most; defaults to 20, the server clamps it to 1-100."),
         ] = 20,
         source_id: SourceId = "",
     ) -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
-            return "（没有可查询的信源）" if not source_id else "（信源不存在或不在当前作用域）"
+            return "(no queryable source)" if not source_id else "(source does not exist or is outside the current scope)"
         needle = (pattern or "").strip()
         if not needle:
-            return "（空匹配串）"
+            return "(empty match string)"
         bounded_limit = max(1, min(limit, 100))
 
         async def _one(source: Source) -> list[dict]:
@@ -403,10 +403,10 @@ def build_source_mcp(
         for source, rows in zip(selected, results, strict=True):
             for row in rows:
                 source_line = (
-                    f"来源：{_source_title(source)}\n" if len(selected) > 1 else ""
+                    f"Source: {_source_title(source)}\n" if len(selected) > 1 else ""
                 )
                 blocks.append(
-                    f"{row['heading'] or '片段'}（chunk_id={row['chunk_id']}）\n"
+                    f"{row['heading'] or 'Snippet'} (chunk_id={row['chunk_id']})\n"
                     f"{source_line}{row['snippet']}"
                 )
                 if len(blocks) >= bounded_limit:
@@ -414,7 +414,7 @@ def build_source_mcp(
             if len(blocks) >= bounded_limit:
                 break
         if not blocks:
-            return "（未匹配到内容）"
+            return "(nothing matched)"
         return "\n\n".join(f"[{index}] {block}" for index, block in enumerate(blocks, 1))
 
     @mcp.tool(
@@ -426,36 +426,36 @@ def build_source_mcp(
         document_id: DocumentId,
         offset: Annotated[
             int,
-            Field(description="从第几行开始读取；首行为 1，默认 1。"),
+            Field(description="Line to start reading from; the first line is 1, default 1."),
         ] = 1,
         limit: Annotated[
             int,
-            Field(description="本次读取多少行；默认 120，服务端最多返回 500 行。"),
+            Field(description="How many lines to read this time; defaults to 120, the server returns at most 500."),
         ] = 120,
     ) -> str:
         scope = _require_scope()
         match = await _document_in_scope(scope, document_id)
         if match is None:
-            return "（未找到该文档）"
+            return "(document not found)"
         document, source = match
         import os
 
         if not document.storage_path or not os.path.isfile(document.storage_path):
-            return "（原始文件不存在或已清理）"
+            return "(the raw file does not exist or has been cleaned up)"
         try:
             with open(document.storage_path, encoding="utf-8", errors="replace") as file:
                 lines = file.readlines()
         except OSError:
-            return "（文件读取失败）"
+            return "(failed to read the file)"
         start = max(0, offset - 1)
         page = lines[start : start + max(1, min(limit, 500))]
         if not page:
-            return f"（超出范围：全文共 {len(lines)} 行）"
+            return f"(out of range: the text has {len(lines)} lines in total)"
         body = "".join(f"{start + index + 1:>5}\t{line}" for index, line in enumerate(page))
-        source_line = f"来源：{_source_title(source)}\n" if len(scope.sources) > 1 else ""
+        source_line = f"Source: {_source_title(source)}\n" if len(scope.sources) > 1 else ""
         return (
-            f"{document.filename} · 第 {start + 1}-{start + len(page)} 行 / "
-            f"共 {len(lines)} 行\n{source_line}{body}"
+            f"{document.filename} - lines {start + 1}-{start + len(page)} / "
+            f"{len(lines)} total\n{source_line}{body}"
         )
 
     @mcp.tool(
@@ -467,10 +467,10 @@ def build_source_mcp(
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
-            return "（没有可查询的信源）" if not source_id else "（信源不存在或不在当前作用域）"
+            return "(no queryable source)" if not source_id else "(source does not exist or is outside the current scope)"
         cid = (chunk_id or "").strip()
         if not cid:
-            return "（缺少 chunk_id）"
+            return "(missing chunk_id)"
 
         async def _one(source: Source):
             try:
@@ -484,11 +484,11 @@ def build_source_mcp(
         results = await asyncio.gather(*(_one(source) for source in selected))
         found = next(((source, chunk) for source, chunk in results if chunk is not None), None)
         if found is None:
-            return "（未找到该分块）"
+            return "(chunk not found)"
         source, chunk = found
         heading = (chunk.heading or "").strip()
         body = f"{heading}\n\n{chunk.content}".strip() if heading else chunk.content
-        return f"来源：{_source_title(source)}\n\n{body}" if len(selected) > 1 else body
+        return f"Source: {_source_title(source)}\n\n{body}" if len(selected) > 1 else body
 
     return mcp
 
@@ -497,7 +497,7 @@ _singleton: FastMCP | None = None
 
 
 def get_source_mcp() -> FastMCP:
-    """返回 stdio/进程内调用复用的 MCP server。"""
+    """Return the MCP server reused by stdio and in-process calls."""
     global _singleton
     if _singleton is None:
         _singleton = build_source_mcp()
@@ -505,7 +505,7 @@ def get_source_mcp() -> FastMCP:
 
 
 async def serve_stdio(source_id: str | None = None) -> None:
-    """运行 stdio server；未提供 source_id 时开放全部信源。"""
+    """Run the stdio server; every source is exposed when no source_id is given."""
     from sqlalchemy import select
 
     from sag_api.core.config import settings
@@ -520,7 +520,7 @@ async def serve_stdio(source_id: str | None = None) -> None:
             statement = statement.where(Source.id == source_id)
         sources = tuple((await session.execute(statement)).scalars().all())
     if source_id and not sources:
-        raise SystemExit(f"信源不存在：{source_id}")
+        raise SystemExit(f"Source does not exist: {source_id}")
 
     mcp = get_source_mcp()
     try:

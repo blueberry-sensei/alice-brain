@@ -6,7 +6,6 @@ import {
   Moon,
   Orbit,
   Palette,
-  Plug,
   Sun,
   UserRound,
 } from "lucide-react";
@@ -18,10 +17,9 @@ export const SETTINGS_PAGE = {
 
 export const SETTINGS_TABS = [
   { value: "account", labelKey: "account", icon: UserRound },
-  { value: "agent", labelKey: "agent", icon: Bot },
   { value: "model", labelKey: "model", icon: Cpu },
+  { value: "subAgents", labelKey: "subAgents", icon: Bot },
   { value: "knowledge", labelKey: "knowledge", icon: LibraryBig },
-  { value: "integrations", labelKey: "integrations", icon: Plug },
   { value: "appearance", labelKey: "appearance", icon: Palette },
   { value: "graph", labelKey: "graph", icon: Orbit },
 ] as const;
@@ -50,7 +48,6 @@ export const THEME_OPTIONS = [
 ] as const;
 
 export const TIMEZONE_OPTIONS = [
-  { value: "Asia/Shanghai", labelKey: "shanghai" },
   { value: "UTC", labelKey: "utc" },
   { value: "Asia/Hong_Kong", labelKey: "hongKong" },
   { value: "Asia/Singapore", labelKey: "singapore" },

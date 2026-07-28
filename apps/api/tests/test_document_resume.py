@@ -1,4 +1,4 @@
-"""文档并发抽取的断点、暂停与继续行为。"""
+"""The checkpoint, pause and resume behaviour of concurrent document extraction."""
 
 from __future__ import annotations
 
@@ -145,8 +145,8 @@ async def test_incremental_processor_passes_chunk_settings_to_engine(monkeypatch
 
     class FakeLoader:
         def __init__(self, *, parser=None):
-            seen["fallback_title"] = parser.extract_title("普通正文，没有 Markdown 标题")
-            seen["explicit_title"] = parser.extract_title("# 正文标题\n\n内容")
+            seen["fallback_title"] = parser.extract_title("Plain body text with no Markdown heading")
+            seen["explicit_title"] = parser.extract_title("# Body heading\n\ncontent")
 
         async def load(self, config):
             seen["max_tokens"] = config.max_tokens
@@ -160,7 +160,7 @@ async def test_incremental_processor_passes_chunk_settings_to_engine(monkeypatch
         max_concurrency=2,
         chunk_max_tokens=1_600,
         chunk_mode="heading_strict",
-        document_title="人类简史",
+        document_title="Sapiens",
     )
 
     outcome = await processor.process(
@@ -171,8 +171,8 @@ async def test_incremental_processor_passes_chunk_settings_to_engine(monkeypatch
     )
 
     assert seen == {
-        "fallback_title": "人类简史",
-        "explicit_title": "正文标题",
+        "fallback_title": "Sapiens",
+        "explicit_title": "Body heading",
         "max_tokens": 1_600,
         "chunk_mode": "heading_strict",
     }
@@ -221,7 +221,7 @@ async def test_incremental_processor_unwraps_taskgroup_chunk_failure(monkeypatch
 
     async def extract_chunk(chunk_id: str):
         if chunk_id == "broken":
-            raise ExtractError("结构化输出达到上限并被截断")
+            raise ExtractError("The structured output hit the cap and was truncated")
         await asyncio.sleep(0.01)
         return ["event-ok"], 10
 
@@ -232,7 +232,7 @@ async def test_incremental_processor_unwraps_taskgroup_chunk_failure(monkeypatch
     monkeypatch.setattr(processor, "_restore_checkpoint_events", no_op)
     monkeypatch.setattr(processor, "_normalize_event_ranks", no_op)
 
-    with pytest.raises(ExtractError, match="达到上限并被截断"):
+    with pytest.raises(ExtractError, match="hit the cap and was truncated"):
         await processor.process(
             None,
             checkpoint=ProcessCheckpoint(chunk_ids=["broken", "other"]),
@@ -268,10 +268,10 @@ async def test_extract_chunk_tracks_tokens_from_wrapped_llm_client(monkeypatch):
             return self.client
 
         async def extract(self, config):
-            assert "观点、事实、定义" in config.custom_requirements
+            assert "opinion, fact, definition" in config.custom_requirements
             assert config.enable_strict_filtering is False
-            # alicecore 的重试客户端会让结构化输出直接调用内层客户端。
-            await self.client.client.chat([SimpleNamespace(content="西游记")])
+            # The retrying client of alicecore makes the structured output call the inner client directly.
+            await self.client.client.chat([SimpleNamespace(content="Journey to the West")])
             return [SimpleNamespace(id="event-1")]
 
     monkeypatch.setattr(processor_module, "EventExtractor", FakeExtractor)
@@ -298,9 +298,9 @@ async def test_extract_chunk_normalizes_unambiguous_entity_type_alias(monkeypatc
                 {
                     "entities": [
                         {
-                            "location": "中东",
-                            "name": "中东",
-                            "description": "尼安德特人演化的主要地区之一",
+                            "location": "the Middle East",
+                            "name": "the Middle East",
+                            "description": "one of the main regions where Neanderthals evolved",
                         }
                     ]
                 }
@@ -328,12 +328,12 @@ async def test_extract_chunk_normalizes_unambiguous_entity_type_alias(monkeypatc
             return self.client
 
         async def extract(self, config):
-            request = {"data": {"meta": {"entity_types": [{"type": "location", "description": "地点"}]}}}
+            request = {"data": {"meta": {"entity_types": [{"type": "location", "description": "location"}]}}}
             response = await self.client.client.chat([SimpleNamespace(content=json.dumps(request, ensure_ascii=False))])
             entity = json.loads(response.content)["data"]["items"][0]["entities"][0]
             assert entity == {
-                "name": "中东",
-                "description": "尼安德特人演化的主要地区之一",
+                "name": "the Middle East",
+                "description": "one of the main regions where Neanderthals evolved",
                 "type": "location",
             }
             return [SimpleNamespace(id="event-1")]
@@ -359,10 +359,10 @@ def test_extraction_response_does_not_guess_ambiguous_entity_type():
                 {
                     "entities": [
                         {
-                            "location": "中东",
-                            "region": "西亚",
-                            "name": "中东",
-                            "description": "地区",
+                            "location": "the Middle East",
+                            "region": "West Asia",
+                            "name": "the Middle East",
+                            "description": "a region",
                         }
                     ]
                 }
@@ -387,9 +387,9 @@ def test_extraction_response_does_not_invent_unknown_entity_type():
                 {
                     "entities": [
                         {
-                            "unknown": "中东",
-                            "name": "中东",
-                            "description": "地区",
+                            "unknown": "the Middle East",
+                            "name": "the Middle East",
+                            "description": "a region",
                         }
                     ]
                 }

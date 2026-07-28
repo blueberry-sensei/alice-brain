@@ -1,4 +1,4 @@
-"""连接器单元测试（无网络）。"""
+"""Connector unit tests (no network)."""
 
 import pytest
 
@@ -28,7 +28,7 @@ def test_web_validate_rejects_bad_url():
         c.validate_config({"urls": "ftp://nope"})
     with pytest.raises(ValidationError):
         c.validate_config({"urls": "not-a-url"})
-    # 合法不抛
+    # A valid configuration does not raise
     c.validate_config({"urls": "https://example.com/docs"})
 
 

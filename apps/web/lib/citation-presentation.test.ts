@@ -12,11 +12,11 @@ function citation(overrides: Partial<Citation> = {}): Citation {
     n: 1,
     kind: "internal",
     chunk_id: "chunk-1",
-    heading: "发布记录",
-    snippet: "这只是检索命中的原文片段，不能自动成为事件标题或摘要。后续正文。",
+    heading: "Release notes",
+    snippet: "This is only the raw fragment the search hit; it must not become the event title or summary by itself. More body text follows.",
     score: 0.9,
     source_id: "source-1",
-    source_name: "项目资料",
+    source_name: "Project material",
     ...overrides,
   };
 }
@@ -30,14 +30,14 @@ describe("citation presentation", () => {
             {
               id: "event-1",
               title: "AI",
-              content: "产品已经完成准备，并正式进入公开测试。",
-              summary: "不应展示的事件摘要。",
+              content: "The product is ready and has formally entered public testing.",
+              summary: "An event summary that must not be shown.",
             },
             {
               id: "event-2",
-              title: "不应默认展示的第二事件",
-              content: "第二事件正文。",
-              summary: "第二事件摘要。",
+              title: "A second event that must not be shown by default",
+              content: "The second event body.",
+              summary: "The second event summary.",
             },
           ],
         }),
@@ -46,7 +46,7 @@ describe("citation presentation", () => {
     ).toEqual({
       mode: "event",
       title: "AI",
-      body: "产品已经完成准备，并正式进入公开测试。",
+      body: "The product is ready and has formally entered public testing.",
       meta: "",
     });
   });
@@ -56,12 +56,12 @@ describe("citation presentation", () => {
 
     expect(copy).toEqual({
       mode: "source_only",
-      title: "知识库来源 1",
+      title: "Nguồn tri thức 1",
       body: "",
-      meta: "项目资料 · 章节：发布记录",
+      meta: "Project material · Mục: Release notes",
     });
-    expect(copy.title).not.toContain("检索命中");
-    expect(copy.body).not.toContain("检索命中");
+    expect(copy.title).not.toContain("search hit");
+    expect(copy.body).not.toContain("search hit");
   });
 
   it("never treats a legacy internal summary or heading as event metadata", () => {
@@ -69,15 +69,15 @@ describe("citation presentation", () => {
       citation({
         heading: "pdf",
         source_name: "pdf",
-        summary: "旧客户端从片段首句生成的摘要。",
-        snippet: "产品介绍 一体机。后续正文。",
+        summary: "A summary an old client built from the first sentence of the snippet.",
+        snippet: "Product introduction, an all-in-one machine. More body text follows.",
       }),
       1,
     );
 
     expect(copy).toEqual({
       mode: "source_only",
-      title: "知识库来源 1",
+      title: "Nguồn tri thức 1",
       body: "",
       meta: "pdf",
     });
@@ -88,20 +88,20 @@ describe("citation presentation", () => {
       citationCopy(
         citation({
           kind: "external",
-          title: "官方发布说明",
-          summary: "官方确认新版本已经发布。",
+          title: "Official release note",
+          summary: "The vendor confirmed the new version has shipped.",
           source: "Example Research",
           url: "https://news.example.com/releases/1",
-          heading: "不应使用的 heading",
-          source_name: "不应使用的 source_name",
-          snippet: "外部工具返回的更长正文片段。",
+          heading: "a heading that must not be used",
+          source_name: "a source_name that must not be used",
+          snippet: "A longer body fragment returned by an external tool.",
         }),
         1,
       ),
     ).toEqual({
       mode: "external",
-      title: "官方发布说明",
-      body: "官方确认新版本已经发布。",
+      title: "Official release note",
+      body: "The vendor confirmed the new version has shipped.",
       meta: "Example Research · news.example.com",
     });
   });
@@ -115,7 +115,7 @@ describe("citation presentation", () => {
           summary: undefined,
           source: null,
           url: "https://www.example.com/article",
-          snippet: "不能冒充外部标题或摘要的正文。",
+          snippet: "Body text that must not pose as an external title or summary.",
         }),
         2,
       ),
@@ -132,33 +132,33 @@ describe("citation presentation", () => {
       citation({
         event_refs: [
           {
-            title: "## 官方更新 □cite□turn17view2",
-            content: "**已经发布** □cite□turn17view4",
-            summary: "不应展示的摘要",
+            title: "## Official update \ue200cite\ue202turn17view2",
+            content: "**Already shipped** \ue200cite\ue202turn17view4",
+            summary: "a summary that must not be shown",
           },
         ],
-        snippet: "`完整片段` □cite□turn17view5",
+        snippet: "`the full fragment` \ue200cite\ue202turn17view5",
       }),
       1,
     );
 
     expect(copy).toMatchObject({
-      title: "官方更新",
-      body: "已经发布",
+      title: "Official update",
+      body: "Already shipped",
     });
-    expect(cleanCitationText("## 执行摘要\n**核心结论**见[报告](https://example.com)。")).toBe(
-      "执行摘要 核心结论见报告。",
+    expect(cleanCitationText("## Executive summary\n**The core conclusion** is in the [report](https://example.com).")).toBe(
+      "Executive summary The core conclusion is in the report.",
     );
     expect(
       cleanCitationText(
-        "真实原文 \ue200cite\ue202turn8view5\ue202turn19view0\ue201 后续内容",
+        "real raw text \ue200cite\ue202turn8view5\ue202turn19view0\ue201 more content",
       ),
-    ).toBe("真实原文 后续内容");
+    ).toBe("real raw text more content");
     expect(
       stripCitationTransportTokens(
-        "第一段 \ue200cite\ue202turn8view5\ue201\n\n第二段 **保留原文格式**",
+        "paragraph one \ue200cite\ue202turn8view5\ue201\n\nparagraph two **keeps the original formatting**",
       ),
-    ).toBe("第一段\n\n第二段 **保留原文格式**");
+    ).toBe("paragraph one\n\nparagraph two **keeps the original formatting**");
   });
 
   it("provides a stable source-only fallback when all metadata is empty", () => {
@@ -169,7 +169,7 @@ describe("citation presentation", () => {
       ),
     ).toEqual({
       mode: "source_only",
-      title: "知识库来源 3",
+      title: "Nguồn tri thức 3",
       body: "",
       meta: "",
     });
@@ -178,15 +178,15 @@ describe("citation presentation", () => {
   it("does not fall back to an event summary or source chunk when content is missing", () => {
     const copy = citationCopy(
       citation({
-        snippet: "检索分块正文",
-        event_refs: [{ title: "真实事项", summary: "压缩摘要" }],
+        snippet: "the retrieved chunk body",
+        event_refs: [{ title: "A real event", summary: "a condensed summary" }],
       }),
       1,
     );
 
     expect(copy).toMatchObject({
       mode: "event",
-      title: "真实事项",
+      title: "A real event",
       body: "",
     });
   });

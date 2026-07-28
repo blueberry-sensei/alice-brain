@@ -1,8 +1,8 @@
-"""网页连接器 —— 首个动态连接器。
+"""Web connector - the first dynamic connector.
 
-抓取用户给定的网页正文，转为 Markdown 交给引擎处理。演示「采集层抽象」如何
-接入外部信息源：`discover()` 列举 URL，`fetch()` 抓取并抽取正文 → 复用同一
-ingest → extract 管线。（MVP 只抓给定 URL，不跟随链接爬取。）
+It fetches the body of a page the user names, converts it to Markdown and hands it to the engine. A demonstration of how the
+"ingestion layer abstraction" plugs into an external source: `discover()` enumerates URLs, `fetch()` downloads and extracts the body ->
+the same ingest -> extract pipeline is reused. (The MVP only fetches the given URLs; it does not follow links.)
 """
 
 from __future__ import annotations
@@ -76,24 +76,24 @@ def extract_web_markdown(html: str) -> str:
         if md and md.strip():
             return md
     except Exception as e:  # noqa: BLE001
-        log.warning("trafilatura 抽取失败，回退裸文本：%s", e)
+        log.warning("trafilatura extraction failed, falling back to bare text: %s", e)
     return _strip_tags(html)
 
 
 class WebConnector(Connector):
     meta = ConnectorMeta(
         kind=ConnectorKind.WEB,
-        title="网页",
-        description="抓取网页正文并转为 Markdown 入库。适合文档站、博客、公开知识页。",
+        title="Web page",
+        description="Fetch the body of a web page and store it as Markdown. Good for documentation sites, blogs and public knowledge pages.",
         supports_sync=True,
         config_fields=[
             ConfigField(
                 key="urls",
-                label="网页地址",
+                label="Page address",
                 type="text",
                 required=True,
                 placeholder="https://example.com/docs\nhttps://example.com/faq",
-                help="每行一个 URL；点击「同步」抓取。",
+                help="One URL per line; click \"Sync\" to fetch.",
             )
         ],
     )
@@ -101,11 +101,11 @@ class WebConnector(Connector):
     def validate_config(self, config: dict[str, Any]) -> None:
         urls = _parse_urls(config)
         if not urls:
-            raise ValidationError("请至少填写一个网页地址")
+            raise ValidationError("Enter at least one page address")
         for u in urls:
             p = urlparse(u)
             if p.scheme not in ("http", "https") or not p.netloc:
-                raise ValidationError(f"无效的网页地址：{u}")
+                raise ValidationError(f"Invalid page address: {u}")
 
     async def discover(self, config: dict[str, Any]) -> list[DiscoveredDoc]:
         return [
@@ -124,14 +124,14 @@ class WebConnector(Connector):
                 resp.raise_for_status()
                 html = resp.text[: _MAX_HTML_BYTES]
         except Exception as e:  # noqa: BLE001
-            raise UpstreamError(f"抓取失败 {doc.external_id}：{e}") from e
+            raise UpstreamError(f"Fetch failed {doc.external_id}: {e}") from e
 
         body = extract_web_markdown(html)
         if not body.strip():
-            raise UpstreamError(f"未能从页面提取到正文：{doc.external_id}")
+            raise UpstreamError(f"Could not extract a body from the page: {doc.external_id}")
 
         title = extract_web_title(html) or doc.filename
-        content = f"# {title}\n\n> 来源：{doc.external_id}\n\n{body}\n"
+        content = f"# {title}\n\n> Source: {doc.external_id}\n\n{body}\n"
 
         digest = hashlib.md5(doc.external_id.encode()).hexdigest()[:12]
         path = os.path.join(tempfile.gettempdir(), f"sag-web-{digest}.md")

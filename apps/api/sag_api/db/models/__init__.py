@@ -1,4 +1,4 @@
-"""ORM 模型聚合导入 —— 保证 Base.metadata 注册全部表。"""
+"""Aggregate ORM model imports - guarantees every table is registered on Base.metadata."""
 
 from sag_api.db.models.agent import Agent, AgentBinding, Message, Thread
 from sag_api.db.models.document import Document

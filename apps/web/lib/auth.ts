@@ -1,10 +1,10 @@
-// 轻量令牌存储：cookie（供中间件路由守卫）+ 本地读取（供 API 客户端加 Bearer 头）。
-// MVP 方案；生产可升级为 httpOnly cookie + route handler 代理。
+// Lightweight token storage: a cookie (for the middleware route guard) plus a local read (so the API client can add the Bearer header).
+// An MVP approach; production can move to an httpOnly cookie plus a route-handler proxy.
 const TOKEN_KEY = "sag_token";
 
 export function setToken(token: string) {
   if (typeof document === "undefined") return;
-  // 7 天，SameSite=Lax
+  // 7 days, SameSite=Lax
   document.cookie = `${TOKEN_KEY}=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 }
 

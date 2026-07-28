@@ -20,5 +20,5 @@ async def get_job(
 ) -> JobOut:
     job = await session.get(Job, job_id)
     if job is None:
-        raise NotFoundError("任务不存在")
+        raise NotFoundError("Task does not exist")
     return JobOut.model_validate(job)

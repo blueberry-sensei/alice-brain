@@ -1,6 +1,6 @@
 """Mã hoá bí mật ở trạng thái nghỉ (secrets at rest).
 
-API key của các provider được lưu trong bảng `settings`, mà file DB nằm trong thư mục
+API key của model và credential sub-agent được lưu trong bảng `settings`, mà file DB nằm trong thư mục
 bind-mount của người dùng. Lưu plaintext nghĩa là bất cứ ai đọc được file đó — hoặc
 vô tình đưa nó vào một bản backup / một repo — là thấy nguyên key.
 

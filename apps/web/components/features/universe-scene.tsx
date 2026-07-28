@@ -96,9 +96,7 @@ export const UniverseScene = React.forwardRef<UniverseSceneHandle, UniverseScene
       extractedEvent: t("extractedEvent"),
       viewDetailsAction: actionLabels?.viewDetails,
       exploreMoreAction: actionLabels?.exploreMore,
-      askAiAction: actionLabels?.askAi,
     }), [
-      actionLabels?.askAi,
       actionLabels?.exploreMore,
       actionLabels?.viewDetails,
       locale,

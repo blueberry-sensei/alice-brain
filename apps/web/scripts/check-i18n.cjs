@@ -8,7 +8,7 @@ const catalogDir = path.join(root, "messages");
 const sourceRoots = ["app", "components", "lib"].map((directory) => path.join(root, directory));
 const allowedCompatibilityValues = new Set([
   // Existing installations may already have a source with this historical name.
-  "对话上传",
+  "Chat uploads",
 ]);
 
 function readCatalog(locale) {

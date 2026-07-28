@@ -1,4 +1,4 @@
-"""文档领域逻辑：上传落盘 → 登记 → 入队处理。"""
+"""Document domain logic: upload to disk -> register -> enqueue for processing."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ async def list_documents(session: AsyncSession, source_id: str) -> list[Document
 async def get_document(session: AsyncSession, source: Source, document_id: str) -> Document:
     doc = await session.get(Document, document_id)
     if doc is None or doc.source_id != source.id:
-        raise NotFoundError("文档不存在")
+        raise NotFoundError("Document does not exist")
     return doc
 
 
@@ -76,9 +76,9 @@ async def create_document_from_upload(
 
 
 def _format_messages(messages: list[dict]) -> str:
-    lines = ["# 消息", ""]
+    lines = ["# Messages", ""]
     for m in messages:
-        who = m.get("author") or m.get("role") or "消息"
+        who = m.get("author") or m.get("role") or "message"
         ts = f"（{m['ts']}）" if m.get("ts") else ""
         lines.append(f"**{who}**{ts}：{m.get('text') or ''}")
     return "\n\n".join(lines)
@@ -94,17 +94,17 @@ async def ingest_content(
     upload_dir: str,
     job_queue: JobQueue,
 ) -> Document:
-    """统一写入：把文本 / 一批消息归一为文档 → 复用 ingest/extract 管线（持续写入）。"""
+    """Unified write: normalise text or a batch of messages into a document -> reuse the ingest/extract pipeline (continuous writes)."""
     from sag_api.core.errors import ValidationError
 
     if messages:
         content = _format_messages(messages)
-        filename = f"{title or f'消息-{len(messages)}条'}.md"
+        filename = f"{title or f'messages-{len(messages)}'}.md"
     elif text:
         content = (f"# {title}\n\n" if title else "") + text
-        filename = f"{title or '文本'}.md"
+        filename = f"{title or 'text'}.md"
     else:
-        raise ValidationError("请提供 text 或 messages")
+        raise ValidationError("Provide either text or messages")
 
     document, _job = await create_document_from_upload(
         session,
@@ -153,8 +153,8 @@ async def reprocess_document(
             ]
             if value
         }
-        # 历史版本的“重新处理”每次都会新建 Article；从所有历史 Job 断点收集
-        # source_id，既清理当前记录，也清理此前已经遗留的重复派生数据。
+        # "Reprocess" in older versions created a new Article every time; collect source_id from every historical Job
+        # checkpoint so both the current record and previously orphaned duplicate derived data get cleaned.
         for derived_source_id in sorted(derived_source_ids):
             await engine_manager.delete_document_data(
                 source.sag_source_config_id,
@@ -212,7 +212,7 @@ async def _refresh_source_counts(session: AsyncSession, source: Source) -> None:
 
 
 async def pause_document(session: AsyncSession, source: Source, document_id: str) -> Job:
-    """协作式暂停：已开始的分块跑完并保存断点，不再领取新分块。"""
+    """Cooperative pause: chunks already started finish and save a checkpoint, and no new chunk is claimed."""
     document = await get_document(session, source, document_id)
     job = await session.scalar(
         select(Job)
@@ -224,7 +224,7 @@ async def pause_document(session: AsyncSession, source: Source, document_id: str
         .limit(1)
     )
     if job is None:
-        raise ConflictError("当前文档没有可停止的抽取任务")
+        raise ConflictError("This document has no extraction task that can be stopped")
 
     if job.status == JobStatus.QUEUED:
         paused = await session.execute(
@@ -240,7 +240,7 @@ async def pause_document(session: AsyncSession, source: Source, document_id: str
         await session.refresh(job)
 
     if job.status != JobStatus.RUNNING:
-        raise ConflictError("抽取任务已经结束，无法停止")
+        raise ConflictError("The extraction task has already finished and cannot be stopped")
     job.payload = {**(job.payload or {}), "pause_requested": True}
     await session.commit()
     await session.refresh(job)
@@ -254,7 +254,7 @@ async def resume_document(
     *,
     job_queue: JobQueue,
 ) -> Job:
-    """把暂停任务原样重新入队，处理器会跳过断点中已完成的分块。"""
+    """Re-enqueue the paused task unchanged; the processor skips chunks already finished in the checkpoint."""
     document = await get_document(session, source, document_id)
     job = await session.scalar(
         select(Job)
@@ -263,7 +263,7 @@ async def resume_document(
         .limit(1)
     )
     if job is None:
-        raise ConflictError("当前文档没有可继续的暂停任务")
+        raise ConflictError("This document has no paused task to resume")
 
     payload = dict(job.payload or {})
     payload.pop("pause_requested", None)

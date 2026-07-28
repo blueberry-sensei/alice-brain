@@ -1,4 +1,4 @@
-"""把 alicecore 的 `SagError` 家族翻译为 sag 领域异常。"""
+"""Translate the alicecore `SagError` family into sag domain exceptions."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from sag_api.core.errors import (
 
 @contextmanager
 def map_sag_errors():
-    """在此上下文内发生的 SagError 会被翻译成对应的 ApiError。"""
+    """A SagError raised inside this context is translated into the matching ApiError."""
     try:
         yield
     except ConfigError as e:
@@ -34,7 +34,7 @@ def map_sag_errors():
     except InvalidInputError as e:
         raise ValidationError(str(e)) from e
     except RetryableError as e:
-        # 限流 / 超时 / 上游暂不可用 —— 可重试
+        # Rate limiting / timeout / upstream temporarily down - retryable
         raise ServiceUnavailableError(str(e)) from e
     except NonRetryableError as e:
         raise ValidationError(str(e)) from e

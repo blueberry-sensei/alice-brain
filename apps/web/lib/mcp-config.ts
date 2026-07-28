@@ -183,7 +183,7 @@ function normalizeServer(rawName: string, raw: JsonRecord): ParsedMcpServer | nu
   };
 }
 
-/** 解析 Claude Desktop、Cursor、VS Code 与单服务形式的 MCP JSON。 */
+/** Parse the MCP JSON of Claude Desktop, Cursor, VS Code and the single-server form. */
 export function parseMcpConfig(value: string): ParsedMcpConfig {
   const source = stripCodeFence(value);
   if (!source) return { servers: [], skipped: [] };

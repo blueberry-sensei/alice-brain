@@ -68,10 +68,10 @@ export function createUpdaterController(
       if (!window || window.isDestroyed()) return;
       const result = await dialog.showMessageBox(window, {
         type: "info",
-        title: "SAG 更新已就绪",
-        message: `SAG ${info.version} 已下载完成`,
-        detail: "可以立即重启安装，也可以在退出应用时自动安装。",
-        buttons: ["稍后", "立即重启"],
+        title: "A SAG update is ready",
+        message: `SAG ${info.version} has finished downloading`,
+        detail: "You can restart now to install it, or let it install automatically when you quit the app.",
+        buttons: ["Later", "Restart now"],
         defaultId: 1,
         cancelId: 0,
       });

@@ -37,7 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-/** 详情面板目标：引用/搜索结果的原文分块，或知识库文档（含原始文件预览）。 */
+/** The detail panel target: the raw chunk behind a citation or a search result, or a knowledge-base document (with a raw file preview). */
 export type DetailTarget =
   | {
       kind: "chunk";
@@ -55,7 +55,7 @@ interface PanelCtx {
   open: (target: DetailTarget) => void;
   close: () => void;
   toggleMaximize: () => void;
-  /** 详情 ResizablePanel 的命令句柄（放大/还原经官方 resize API） */
+  /** The command handle of the detail ResizablePanel (maximise/restore through the official resize API) */
   panelRef: React.RefObject<ImperativePanelHandle | null>;
 }
 
@@ -106,7 +106,7 @@ export function DetailPanelProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
-  // 切换主导航（/chat ↔ /search ↔ /knowledge…）时收起面板
+  // Collapse the panel when the main navigation changes (/chat <-> /search <-> /knowledge and so on)
   const section = pathname.split("/")[1];
   const prevSection = React.useRef(section);
   React.useEffect(() => {
@@ -123,14 +123,14 @@ export function DetailPanelProvider({ children }: { children: React.ReactNode })
   );
 }
 
-/** 主内容区：面板放大时隐藏（只留左侧菜单 + 面板）。 */
+/** Main content area: hidden while the panel is maximised (leaving only the left menu and the panel). */
 export function DetailPanelMain({ children }: { children: React.ReactNode }) {
   return <div className="h-full min-w-0 overflow-y-auto overscroll-contain">{children}</div>;
 }
 
-// ── 内容视图 ─────────────────────────────────────────────────────────
+// -- Content views ---------------------------------------------------
 
-/** 单按钮切换 Markdown 预览与原始内容，图标表示当前模式。 */
+/** One button toggles between the Markdown preview and the raw content; the icon shows the current mode. */
 function RenderModeToggle({
   mode,
   onChange,
@@ -376,7 +376,7 @@ function OriginalDocumentPreview({ doc }: { doc: Doc }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      /* 提示由浏览器兜底 */
+      /* The browser supplies the fallback hint */
     }
   }
 
@@ -642,7 +642,7 @@ export function DocumentDetailContent({
   );
 }
 
-// ── 面板外壳 ─────────────────────────────────────────────────────────
+// -- Panel shell -----------------------------------------------------
 
 function PanelBody({ target }: { target: DetailTarget }) {
   return target.kind === "chunk" ? (
@@ -652,7 +652,7 @@ function PanelBody({ target }: { target: DetailTarget }) {
   );
 }
 
-/** lg 断点（详情栏 内嵌/Sheet 的分界）。 */
+/** The lg breakpoint (where the detail column switches between inline and Sheet). */
 export function useIsLgUp(): boolean {
   const [isLg, setIsLg] = React.useState(true);
   React.useEffect(() => {
@@ -665,7 +665,7 @@ export function useIsLgUp(): boolean {
   return isLg;
 }
 
-/** 小屏详情：Sheet 覆盖层。 */
+/** Small-screen detail: a Sheet overlay. */
 export function DetailPanelSheet() {
   const t = useTranslations("DetailPanel");
   const { target, close } = useDetailPanel();
@@ -684,7 +684,7 @@ export function DetailPanelSheet() {
   );
 }
 
-/** 桌面详情：Resizable 面板内的内容（宽度由外层官方组件管理）。 */
+/** Desktop detail: the content inside the Resizable panel (its width managed by the official outer component). */
 export function DetailPanelOutlet() {
   const t = useTranslations("DetailPanel");
   const { target, maximized, close, toggleMaximize } = useDetailPanel();

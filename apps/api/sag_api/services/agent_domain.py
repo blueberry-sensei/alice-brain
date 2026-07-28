@@ -1,4 +1,4 @@
-"""Agent 领域逻辑：CRUD、绑定（信源/MCP）、上下文解析、多源 fan-out 对话。"""
+"""Agent domain logic: CRUD, bindings (sources / MCP), context resolution, multi-source fan-out conversation."""
 
 from __future__ import annotations
 
@@ -24,7 +24,22 @@ from sag_api.generation import build_agent_messages, build_prompt_preview
 from sag_api.generation.prompt import estimate_tokens
 from sag_api.services.source_service import search_source_candidates
 
-_DEFAULT_TITLES = {"新会话", "New chat"}
+def _legacy_digest(value: str) -> str:
+    """SHA-256 của một giá trị mặc định CŨ đã nằm trong DB người dùng.
+
+    Các giá trị đó vốn là tiếng Trung. Không giữ nguyên văn trong source (app không còn chữ
+    Trung nào), nhưng vẫn phải nhận ra được, nếu không bản cài cũ mất đường di trú.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+# sha256 của tiêu đề mặc định cũ do bản tiếng Trung sinh ra.
+_LEGACY_DEFAULT_TITLE_DIGESTS = {"c57c30bc05f744ab3cb81c74183f0408deb55a002422c41f30fbe3ae3d87edaa"}
+_DEFAULT_TITLES = {"New chat"}
+
+
+def _is_default_title(title: str) -> bool:
+    return title in _DEFAULT_TITLES or _legacy_digest(title) in _LEGACY_DEFAULT_TITLE_DIGESTS
 THREAD_PAGE_DEFAULT = 6
 THREAD_PAGE_MAX = 100
 MESSAGE_PAGE_DEFAULT = 40
@@ -83,7 +98,7 @@ def _encode_message_cursor(thread_id: str, message: Message) -> str:
 
 def _decode_message_cursor(thread_id: str, value: str) -> tuple[datetime, str]:
     def invalid() -> ValidationError:
-        return ValidationError("消息游标无效", code="invalid_cursor")
+        return ValidationError("Invalid message cursor", code="invalid_cursor")
 
     if not value or len(value) > MESSAGE_CURSOR_MAX_LENGTH or value.count(".") != 1:
         raise invalid()
@@ -136,14 +151,14 @@ async def list_agents(session: AsyncSession) -> list[Agent]:
 async def get_agent(session: AsyncSession, agent_id: str) -> Agent:
     agent = await session.get(Agent, agent_id)
     if agent is None:
-        raise NotFoundError("Agent 不存在")
+        raise NotFoundError("Agent does not exist")
     return agent
 
 
 async def create_agent(session: AsyncSession, *, name: str, avatar: str = "", persona: dict | None = None) -> Agent:
     name = name.strip()
     if not name:
-        raise ValidationError("Agent 名称不能为空")
+        raise ValidationError("Agent name cannot be empty")
     agent = Agent(name=name, avatar=avatar or name[:1], persona=persona or {})
     session.add(agent)
     await session.commit()
@@ -171,22 +186,36 @@ async def update_agent(
     return agent
 
 
-_DEFAULT_GREETING = "我在。上传资料到知识库，或直接问我任何问题。"
-_DEFAULT_PERSONA = {"greeting": _DEFAULT_GREETING, "system_prompt": ""}
+# sha256 của lời chào mặc định cũ (bản tiếng Trung) — xem `_legacy_digest`.
+_LEGACY_DEFAULT_GREETING_DIGESTS = {"b5d3140db5d6cb98c2f1032fcf1eea97aa8745cbcc4aff6827c403ee554ad01d"}
+_DEFAULT_PERSONA = {"greeting": "", "system_prompt": ""}
 
 
-def _is_legacy_default_agent(agent: Agent) -> bool:
-    """仅识别旧版本完全未自定义的默认助手，避免覆盖用户修改。"""
-    return agent.name == "sag" and agent.avatar in {"s", "S"} and (agent.persona or {}) == _DEFAULT_PERSONA
+def _is_legacy_default_persona(persona: dict) -> bool:
+    if set(persona) != {"greeting", "system_prompt"} or persona.get("system_prompt"):
+        return False
+    greeting = persona.get("greeting")
+    return isinstance(greeting, str) and _legacy_digest(greeting) in _LEGACY_DEFAULT_GREETING_DIGESTS
+
+
+def _migrate_legacy_default_agent(agent: Agent) -> bool:
+    """Chỉ thay các giá trị mặc định cũ; không ghi đè phần người dùng đã sửa."""
+    changed = False
+    if agent.name == "sag" and agent.avatar in {"s", "S"}:
+        agent.name = DEFAULT_AGENT_NAME
+        agent.avatar = DEFAULT_AGENT_AVATAR
+        changed = True
+    if _is_legacy_default_persona(agent.persona or {}):
+        agent.persona = dict(_DEFAULT_PERSONA)
+        changed = True
+    return changed
 
 
 async def get_default_agent(session: AsyncSession) -> Agent:
-    """默认 agent（开箱即用的主对话入口）：get-or-create，幂等。"""
+    """Default agent (the out-of-the-box main conversation entry): get-or-create, idempotent."""
     agent = await session.scalar(select(Agent).where(Agent.is_default.is_(True)))
     if agent is not None:
-        if _is_legacy_default_agent(agent):
-            agent.name = DEFAULT_AGENT_NAME
-            agent.avatar = DEFAULT_AGENT_AVATAR
+        if _migrate_legacy_default_agent(agent):
             await session.commit()
             await session.refresh(agent)
         return agent
@@ -208,7 +237,7 @@ async def delete_agent(session: AsyncSession, agent_id: str) -> None:
     await session.commit()
 
 
-# ── 绑定（信源 / MCP server）────────────────────────────────────────
+# -- Bindings (source / MCP server) ---------------------------------
 async def list_bindings(session: AsyncSession, agent: Agent) -> list[AgentBinding]:
     rows = await session.execute(select(AgentBinding).where(AgentBinding.agent_id == agent.id))
     return list(rows.scalars().all())
@@ -225,10 +254,10 @@ async def add_binding(
     config = config or {}
     if target_type == BindingTargetType.SOURCE:
         if await session.get(Source, target_id) is None:
-            raise NotFoundError("信源不存在")
+            raise NotFoundError("Source does not exist")
     elif target_type == BindingTargetType.MCP_SERVER:
         if not (config.get("url") or config.get("command")):
-            raise ValidationError("MCP server 需提供 url 或 command")
+            raise ValidationError("An MCP server needs either a url or a command")
         target_id = target_id or (config.get("name") or config.get("url") or "mcp")
     exists = await session.scalar(
         select(AgentBinding).where(
@@ -238,7 +267,7 @@ async def add_binding(
         )
     )
     if exists is not None:
-        raise ConflictError("已绑定该目标")
+        raise ConflictError("That target is already bound")
     binding = AgentBinding(agent_id=agent.id, target_type=target_type, target_id=target_id, config=config)
     session.add(binding)
     await session.commit()
@@ -249,7 +278,7 @@ async def add_binding(
 async def remove_binding(session: AsyncSession, agent: Agent, binding_id: str) -> None:
     binding = await session.get(AgentBinding, binding_id)
     if binding is None or binding.agent_id != agent.id:
-        raise NotFoundError("绑定不存在")
+        raise NotFoundError("Binding does not exist")
     await session.delete(binding)
     await session.commit()
 
@@ -259,10 +288,10 @@ async def resolve_sources(
     agent: Agent,
     source_ids: list[str] | None = None,
 ) -> list[Source]:
-    """解析本轮可见信源。
+    """Resolve the sources visible in this turn.
 
-    显式 `source_ids` 来自输入框的 @ 范围，优先于持久绑定；所有入口共用同一
-    候选上限，避免默认 Agent 或大量绑定造成无界 fan-out。
+    An explicit `source_ids` comes from the @ scope in the input box and wins over persistent bindings; every
+    entry point shares one candidate cap, so a default Agent or a pile of bindings cannot cause unbounded fan-out.
     """
     if source_ids:
         return await search_source_candidates(session, source_ids)
@@ -276,7 +305,7 @@ async def resolve_sources(
 
 
 async def resolve_mcp_specs(session: AsyncSession, agent: Agent) -> list[tuple[str, dict]]:
-    """展开外部 MCP server 绑定 → `[(label, config), …]`，供 agent 作 MCP 客户端挂载。"""
+    """Expand external MCP server bindings into `[(label, config), ...]`, for the agent to mount as an MCP client."""
     bindings = await list_bindings(session, agent)
     specs: list[tuple[str, dict]] = []
     for b in bindings:
@@ -287,7 +316,7 @@ async def resolve_mcp_specs(session: AsyncSession, agent: Agent) -> list[tuple[s
     return specs
 
 
-# ── 会话 ────────────────────────────────────────────────────────────
+# -- Threads --------------------------------------------------------
 async def list_threads(
     session: AsyncSession,
     agent_id: str,
@@ -326,8 +355,8 @@ async def update_thread(
     return thread
 
 
-async def create_thread(session: AsyncSession, agent: Agent, title: str = "新会话") -> Thread:
-    thread = Thread(agent_id=agent.id, title=title or "新会话")
+async def create_thread(session: AsyncSession, agent: Agent, title: str = "New chat") -> Thread:
+    thread = Thread(agent_id=agent.id, title=title or "New chat")
     session.add(thread)
     await session.commit()
     await session.refresh(thread)
@@ -337,7 +366,7 @@ async def create_thread(session: AsyncSession, agent: Agent, title: str = "新�
 async def get_thread(session: AsyncSession, agent_id: str, thread_id: str) -> Thread:
     thread = await session.get(Thread, thread_id)
     if thread is None or thread.agent_id != agent_id:
-        raise NotFoundError("会话不存在")
+        raise NotFoundError("Thread does not exist")
     return thread
 
 
@@ -354,14 +383,14 @@ async def list_messages_page(
     limit: int = MESSAGE_PAGE_DEFAULT,
     cursor: str | None = None,
 ) -> MessagePage:
-    """返回最近一页消息，页内保持正向时间顺序。
+    """Return the most recent page of messages, keeping forward chronological order within the page.
 
-    数据库以 `(created_at, id)` 倒序做 keyset 读取，只取 `limit + 1`
-    判断是否还有更旧消息；不做 COUNT 扫描。
+    The database does a keyset read ordered by `(created_at, id)` descending and takes only `limit + 1`
+    to tell whether older messages remain; there is no COUNT scan.
     """
     if limit < 1 or limit > MESSAGE_PAGE_MAX:
         raise ValidationError(
-            f"消息页大小必须在 1 到 {MESSAGE_PAGE_MAX} 之间",
+            f"Message page size must be between 1 and {MESSAGE_PAGE_MAX}",
             code="invalid_page_limit",
         )
 
@@ -406,9 +435,9 @@ def _history_tokens(history: list[dict[str, str]]) -> int:
 
 
 async def compress_history(history: list[dict[str, str]], *, llm=None, budget_tokens: int) -> list[dict[str, str]]:
-    """上下文阈值压缩：超预算时把较早消息压成一段摘要，仅保留最近 N 条原文。
+    """Context-threshold compaction: when over budget, older messages are folded into one summary and only the most recent N stay verbatim.
 
-    有 LLM → 摘要旧段（保留事实/结论/称呼/待办）；无 LLM/失败 → 按预算从尾部裁剪。
+    With an LLM -> summarise the old span (keeping facts / conclusions / forms of address / to-dos); without an LLM, or on failure -> trim from the tail to fit the budget.
     """
     if _history_tokens(history) <= budget_tokens:
         return history
@@ -420,27 +449,44 @@ async def compress_history(history: list[dict[str, str]], *, llm=None, budget_to
         return recent
 
     if llm is not None and getattr(llm, "configured", False):
-        transcript = "\n".join(f"{'用户' if m['role'] == 'user' else '助手'}：{m['content']}" for m in older)[:12000]
+        language = settings.sag_language if settings.sag_language in {"en", "vi"} else "en"
+        user_label, assistant_label = (
+            ("Người dùng", "Trợ lý") if language == "vi" else ("User", "Assistant")
+        )
+        transcript = "\n".join(
+            f"{user_label if m['role'] == 'user' else assistant_label}: {m['content']}"
+            for m in older
+        )[:12000]
+        summary_instruction = (
+            "Tóm tắt hội thoại sau thành các ý chính (không quá 400 từ). Giữ lại sự kiện, "
+            "kết luận, số liệu, cách xưng hô và việc chưa giải quyết; không bình luận."
+            if language == "vi"
+            else "Summarize the following conversation in at most 400 words. Preserve facts, "
+            "conclusions, numbers, names, forms of address, and unresolved items; do not comment."
+        )
         try:
             summary = await llm.complete(
                 [
                     {
                         "role": "system",
-                        "content": (
-                            "把以下对话压缩为要点摘要（≤400字）：保留事实、结论、数字、人物称呼与未决事项；不要评论。"
-                        ),
+                        "content": summary_instruction,
                     },
                     {"role": "user", "content": transcript},
                 ]
             )
+            summary_label = (
+                "Tóm tắt hội thoại trước đó để tham khảo"
+                if language == "vi"
+                else "Summary of the earlier conversation for reference"
+            )
             return [
-                {"role": "user", "content": f"（此前对话摘要，供参考）\n{summary.strip()}"},
+                {"role": "user", "content": f"{summary_label}\n{summary.strip()}"},
                 *recent,
             ]
         except Exception:  # noqa: BLE001
             pass
 
-    # 兜底：从最近往前装，装满预算为止
+    # Fallback: load from the most recent backwards until the budget is full
     trimmed: list[dict[str, str]] = []
     used = 0
     for m in reversed(history):
@@ -452,16 +498,16 @@ async def compress_history(history: list[dict[str, str]], *, llm=None, budget_to
     return list(reversed(trimmed))
 
 
-# ── 问答计划 ─────────────────────────────────────────────────────────
+# -- Question-answering plan ------------------------------------------
 @dataclass
 class AskPlan:
-    """一次问答的提示词计划（agent-first：检索由循环内工具按需完成，不预置资料区）。"""
+    """Prompt plan for one question (agent-first: retrieval happens through in-loop tools on demand, no pre-filled material section)."""
 
     query: str = ""
     messages: list[dict[str, str]] = field(default_factory=list)
     citations: list[dict] = field(default_factory=list)
     prompt_preview: str = ""
-    source_ids: list[str] | None = None  # @范围：限定循环内检索工具可见的信源
+    source_ids: list[str] | None = None  # @ scope: limits which sources the in-loop retrieval tools can see
     user_message_id: str | None = None
 
 
@@ -473,7 +519,7 @@ def build_ask_context(
     attachments: list[dict] | None = None,
     source_ids: list[str] | None = None,
 ) -> AskPlan:
-    """组装带系统提示的消息（不落库，对话与 OpenAI 端点复用）。是否检索由模型经工具决定。"""
+    """Assemble the messages with the system prompt (not persisted, shared by conversation and the OpenAI endpoint). The model decides through tools whether to retrieve."""
     messages = build_agent_messages(
         agent.name,
         agent.persona or {},
@@ -486,7 +532,7 @@ def build_ask_context(
     return AskPlan(
         query=query,
         messages=messages,
-        prompt_preview=build_prompt_preview(messages),
+        prompt_preview=build_prompt_preview(messages, language=settings.sag_language),
         source_ids=source_ids or None,
     )
 
@@ -501,14 +547,14 @@ async def prepare_ask(
     source_ids: list[str] | None = None,
     llm=None,
 ) -> AskPlan:
-    """落库用户消息（含图片附件 meta）、解析历史（超上下文阈值时主动压缩），组装计划。"""
+    """Persist the user message (including image attachment meta), resolve history (compacting when over the context threshold), and assemble the plan."""
     from sag_api.api.v1.attachments import attachment_path
 
     resolved: list[dict] = []
     for aid in attachments or []:
         path = attachment_path(aid)
         if path is None:
-            raise ValidationError(f"附件不存在或已过期：{aid}")
+            raise ValidationError(f"Attachment does not exist or has expired: {aid}")
         ext = aid.rsplit(".", 1)[-1].lower()
         media_type = {
             "png": "image/png",
@@ -527,13 +573,13 @@ async def prepare_ask(
         attachments=[{k: a[k] for k in ("id", "media_type")} for a in resolved],
     )
     session.add(user_msg)
-    if thread.title in _DEFAULT_TITLES:
-        thread.title = query[:40] or "图片对话"
+    if _is_default_title(thread.title):
+        thread.title = query[:40] or "Image conversation"
     await session.commit()
     await session.refresh(user_msg)
 
     history = await _history(session, thread.id, exclude_id=user_msg.id)
-    # 历史预算 = 上下文窗口的 40%（其余留给工具轮/回答）
+    # History budget = 40% of the context window (the rest is left for tool rounds and the answer)
     history = await compress_history(history, llm=llm, budget_tokens=int(settings.llm_context_window * 0.4))
     plan = build_ask_context(
         agent=agent,
@@ -550,7 +596,7 @@ async def delete_message(session: AsyncSession, agent_id: str, thread_id: str, m
     thread = await get_thread(session, agent_id, thread_id)
     message = await session.get(Message, message_id)
     if message is None or message.thread_id != thread.id:
-        raise NotFoundError("消息不存在")
+        raise NotFoundError("Message does not exist")
     await session.delete(message)
     await session.commit()
 

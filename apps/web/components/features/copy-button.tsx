@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { copyText } from "@/lib/clipboard";
 
-/** 复制按钮 —— 成功后短暂切换为对勾并 toast，统一全站复制交互。 */
+/** Copy button - briefly turns into a tick and toasts on success, keeping the copy interaction consistent site-wide. */
 export function CopyButton({ text, label }: { text: string; label?: string }) {
   const t = useTranslations("CopyButton");
   const [done, setDone] = React.useState(false);

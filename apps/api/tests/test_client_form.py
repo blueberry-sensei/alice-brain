@@ -1,4 +1,4 @@
-"""v0.3 客户端形态后端：默认 agent、近期动态、文档原文端点。全程离线。"""
+"""The v0.3 client-shape backend: the default agent, recent activity, the document raw-text endpoint. Fully offline."""
 
 import httpx
 import pytest
@@ -16,7 +16,7 @@ class OfflineLLM:
         yield ModelChunk(text_delta="ok", finish_reason="stop")
 
     async def complete(self, messages):
-        return "摘要"
+        return "summary"
 
 
 async def _register(c, email):
@@ -39,22 +39,23 @@ async def test_default_agent_activity_and_document_file():
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             A = await _register(c, "clientform@t.com")
 
-            # 模拟旧版本完整默认值；正式端点应安全迁移到新身份。
+            # Simulate the complete old defaults; the official endpoint must migrate safely to the new identity.
             async with SessionLocal() as s:
                 legacy = await s.scalar(select(Agent).where(Agent.is_default.is_(True)))
                 legacy.name = "sag"
                 legacy.avatar = "s"
                 legacy.persona = {
-                    "greeting": "我在。上传资料到知识库，或直接问我任何问题。",
+                    "greeting": "\u6211\u5728\u3002\u4e0a\u4f20\u8d44\u6599\u5230\u77e5\u8bc6\u5e93\uff0c\u6216\u76f4\u63a5\u95ee\u6211\u4efb\u4f55\u95ee\u9898\u3002",  # legacy default persona kept as escapes on purpose
                     "system_prompt": "",
                 }
                 await s.commit()
 
-            # 默认 agent：端点 get-or-create 幂等（id 稳定），旧默认自动迁移。
+            # The default agent: the endpoint is an idempotent get-or-create (a stable id), and the old defaults migrate automatically.
             a1 = (await c.get("/api/v1/agents/default", headers=A)).json()
             a2 = (await c.get("/api/v1/agents/default", headers=A)).json()
             assert a1["id"] == a2["id"] and a1["is_default"] is True
             assert a1["name"] == DEFAULT_AGENT_NAME and a1["avatar"] == DEFAULT_AGENT_AVATAR
+            assert a1["persona"]["greeting"] == ""
             async with SessionLocal() as s:
                 defaults = (
                     (await s.execute(select(Agent).where(Agent.is_default.is_(True))))
@@ -63,14 +64,14 @@ async def test_default_agent_activity_and_document_file():
                 )
                 assert len(defaults) == 1
 
-            # 知识库 = 全部信源：新建信源后无需绑定即被 resolve
-            src = (await c.post("/api/v1/sources", headers=A, json={"name": "客户端源"})).json()
+            # Knowledge base = every source: a newly created source is resolved without any binding
+            src = (await c.post("/api/v1/sources", headers=A, json={"name": "Client source"})).json()
             async with SessionLocal() as s:
                 agent = await s.get(Agent, a1["id"])
                 sources = await resolve_sources(s, agent)
                 assert any(x.id == src["id"] for x in sources)
 
-            # 上传一个文档（离线：md 解析入库）
+            # Upload one document (offline: md is parsed and stored)
             up = await c.post(
                 f"/api/v1/sources/{src['id']}/documents",
                 headers=A,
@@ -79,10 +80,10 @@ async def test_default_agent_activity_and_document_file():
             assert up.status_code in (200, 201), up.text
             doc = up.json()
 
-            # 近期动态：包含该文档；thread 建一个后也出现
+            # Recent activity: it contains that document; a thread also appears once created
             t = (await c.post(f"/api/v1/agents/{a1['id']}/threads", headers=A, json={})).json()
             acts = (await c.get("/api/v1/activity", headers=A)).json()
-            assert all(x["type"] == "document" for x in acts)  # 动态=知识库事件，不含会话
+            assert all(x["type"] == "document" for x in acts)  # activity = knowledge-base events, threads excluded
             assert any(x["id"] == doc["id"] for x in acts)
             assert acts == sorted(acts, key=lambda x: x["at"], reverse=True)
 
@@ -104,7 +105,7 @@ async def test_default_agent_activity_and_document_file():
             ).json()
             assert empty_acts == []
 
-            # 归档：PATCH → 默认列表消失、archived=true 列表出现、恢复回来
+            # Archiving: PATCH -> it leaves the default list, appears in the archived=true list, and comes back on restore
             arch = await c.patch(
                 f"/api/v1/agents/{a1['id']}/threads/{t['id']}",
                 headers=A,
@@ -120,11 +121,11 @@ async def test_default_agent_activity_and_document_file():
             back = await c.patch(
                 f"/api/v1/agents/{a1['id']}/threads/{t['id']}",
                 headers=A,
-                json={"archived": False, "title": "改名后的会话"},
+                json={"archived": False, "title": "Renamed thread"},
             )
-            assert back.json()["archived"] is False and back.json()["title"] == "改名后的会话"
+            assert back.json()["archived"] is False and back.json()["title"] == "Renamed thread"
 
-            # 图片附件：上传 → 取回一致；非图片 422；纯图片也可直接发起 Agent run。
+            # Image attachments: upload -> retrieve identical; a non-image gives 422; an image alone can also start an Agent run.
             png = bytes.fromhex(
                 "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
                 "0000000d4944415478da63fcffff3f030005fe02fea7568c4a0000000049454e44ae426082"
@@ -153,11 +154,11 @@ async def test_default_agent_activity_and_document_file():
             mine = [m for m in msgs if m["role"] == "user" and m["attachments"]]
             assert mine and mine[0]["attachments"][0]["id"] == aid
 
-            # 范围问答参数被接受；消息删除端点
+            # The scoped question parameters are accepted; the message delete endpoint
             scoped = await c.post(
                 f"/api/v1/agents/{a1['id']}/threads/{t['id']}/ask",
                 headers=A,
-                json={"query": "只查这个源", "source_ids": [src["id"]]},
+                json={"query": "search only this source", "source_ids": [src["id"]]},
             )
             assert scoped.status_code == 200 and "event: run.completed" in scoped.text
             gone_id = mine[0]["id"]
@@ -170,7 +171,7 @@ async def test_default_agent_activity_and_document_file():
             ).json()["items"]
             assert all(m["id"] != gone_id for m in after)
 
-            # 原文端点：200 + 内容与上传一致；不存在的 id → 404
+            # The raw-text endpoint: 200 with content matching the upload; a missing id -> 404
             f = await c.get(
                 f"/api/v1/sources/{src['id']}/documents/{doc['id']}/file", headers=A
             )

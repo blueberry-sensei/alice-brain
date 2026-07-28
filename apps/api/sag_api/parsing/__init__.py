@@ -1,4 +1,4 @@
-"""把上传文件规范化为 alicecore 可摄取的 Markdown。"""
+"""Normalise uploaded files into Markdown that alicecore can ingest."""
 
 from sag_api.parsing.service import ParseStateCallback, PreparedDocument, prepare_document
 

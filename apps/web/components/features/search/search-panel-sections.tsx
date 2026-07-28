@@ -32,7 +32,7 @@ import { DocStatusBadge } from "@/components/features/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 
-/** 检索扫描动画：骨架行 1→N 铺开、随机高亮、清空、再来——「翻找数据」的具象化。 */
+/** The retrieval scan animation: skeleton rows unroll 1->N, highlight at random, clear, repeat - a visual for "digging through the data". */
 export function SearchScanning() {
   const t = useTranslations("Search");
   const [rows, setRows] = React.useState(1);

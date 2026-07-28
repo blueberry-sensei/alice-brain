@@ -77,7 +77,7 @@ async def _source_graph_revision(
             )
         ).one_or_none()
         if source_state is None:
-            raise NotFoundError("信息源不存在")
+            raise NotFoundError("Source does not exist")
         overview_id = await revision_session.scalar(
             select(UniverseOverview.id)
         .where(
@@ -407,7 +407,7 @@ async def rebuild_universe_overview(
                 await session.commit()
         except Exception:  # noqa: BLE001 - preserve the original build failure
             await session.rollback()
-            log.exception("记录知识宇宙构建失败状态时再次失败 overview=%s", overview_id)
+            log.exception("Failed again while recording the knowledge-universe build failure overview=%s", overview_id)
         raise
 
     # Activation is already committed. Retention cleanup is deliberately
@@ -416,7 +416,7 @@ async def rebuild_universe_overview(
         await _cleanup_old_overviews(session, user_id, overview_id)
     except Exception:  # noqa: BLE001 - a valid active overview remains usable
         await session.rollback()
-        log.exception("清理旧知识宇宙快照失败 active_overview=%s", overview_id)
+        log.exception("Failed to clean up old knowledge-universe snapshots active_overview=%s", overview_id)
     return overview
 
 
@@ -640,7 +640,7 @@ async def universe_expand(
     """Resolve a source-qualified node and return one bounded factual hop."""
     source = await session.get(Source, source_id)
     if source is None:
-        raise NotFoundError("信息源不存在")
+        raise NotFoundError("Source does not exist")
     source_revision = await _source_graph_revision(
         user_id=user_id,
         source_id=source.id,
@@ -661,25 +661,25 @@ async def universe_expand(
                 before=before,
             )
     except TimeoutError as error:
-        raise ServiceUnavailableError("知识邻域查询超时，请缩小时间范围后重试") from error
+        raise ServiceUnavailableError("The knowledge neighbourhood query timed out, narrow the time range and retry") from error
     except ValueError as error:
         if "revision" in str(error):
             raise ConflictError(
-                "知识图谱数据已更新，请重新开始当前探索",
+                "The knowledge graph data has changed, please restart this exploration",
                 code="snapshot_changed",
             ) from error
-        raise ValidationError("无效或不匹配的知识宇宙游标") from error
+        raise ValidationError("Invalid or mismatched knowledge-universe cursor") from error
     except TypeError as error:
-        raise ValidationError("无效或不匹配的知识宇宙游标") from error
+        raise ValidationError("Invalid or mismatched knowledge-universe cursor") from error
     if expansion is None:
-        raise NotFoundError("知识星点已不存在")
+        raise NotFoundError("That knowledge node no longer exists")
     committed_revision = await _source_graph_revision(
         user_id=user_id,
         source_id=source.id,
     )
     if committed_revision != source_revision:
         raise ConflictError(
-            "知识图谱数据已更新，请重新开始当前探索",
+            "The knowledge graph data has changed, please restart this exploration",
             code="snapshot_changed",
         )
 
@@ -772,7 +772,7 @@ async def universe_timeline(
     """Load one stable, recent-to-old source timeline page with bounded context."""
     source = await session.get(Source, source_id)
     if source is None:
-        raise NotFoundError("信息源不存在")
+        raise NotFoundError("Source does not exist")
     source_revision = await _source_graph_revision(
         user_id=user_id,
         source_id=source.id,
@@ -790,23 +790,23 @@ async def universe_timeline(
                 source_revision=source_revision,
             )
     except TimeoutError as error:
-        raise ServiceUnavailableError("知识时间轴查询超时，请稍后重试") from error
+        raise ServiceUnavailableError("The knowledge timeline query timed out, please retry shortly") from error
     except ValueError as error:
         if "revision" in str(error):
             raise ConflictError(
-                "知识图谱数据已更新，请刷新时间轴后继续",
+                "The knowledge graph data has changed, please refresh the timeline to continue",
                 code="snapshot_changed",
             ) from error
-        raise ValidationError("无效或不匹配的知识时间轴游标") from error
+        raise ValidationError("Invalid or mismatched knowledge-timeline cursor") from error
     except TypeError as error:
-        raise ValidationError("无效或不匹配的知识时间轴游标") from error
+        raise ValidationError("Invalid or mismatched knowledge-timeline cursor") from error
     committed_revision = await _source_graph_revision(
         user_id=user_id,
         source_id=source.id,
     )
     if committed_revision != source_revision:
         raise ConflictError(
-            "知识图谱数据已更新，请刷新时间轴后继续",
+            "The knowledge graph data has changed, please refresh the timeline to continue",
             code="snapshot_changed",
         )
     page_signature = "|".join(
@@ -879,7 +879,7 @@ async def universe_node_detail(
 ) -> dict[str, Any]:
     source = await session.get(Source, source_id)
     if source is None:
-        raise NotFoundError("信息源不存在")
+        raise NotFoundError("Source does not exist")
     try:
         async with asyncio.timeout(8.0):
             detail = await engine_manager.universe_node_detail(
@@ -889,9 +889,9 @@ async def universe_node_detail(
                 source=source,
             )
     except TimeoutError as error:
-        raise ServiceUnavailableError("知识星点读取超时，请稍后重试") from error
+        raise ServiceUnavailableError("Reading the knowledge node timed out, please retry shortly") from error
     if detail is None:
-        raise NotFoundError("知识星点已不存在")
+        raise NotFoundError("That knowledge node no longer exists")
 
     evidence = None
     chunk_id = detail.get("chunk_id")
@@ -922,7 +922,7 @@ async def universe_node_detail(
         "kind": node_kind,
         "source_id": source.id,
         "source_name": source.name,
-        "label": detail.get("label") or "未命名星点",
+        "label": detail.get("label") or "Untitled node",
         "description": detail.get("description") or "",
         "category": detail.get("category", ""),
         "start_time": detail.get("start_time"),
@@ -1070,7 +1070,7 @@ async def save_exploration(
     relations: list[dict],
     evidence: list[dict],
 ) -> tuple[ExplorationSession, ExplorationStep]:
-    title = query.strip()[:80] or "新探索"
+    title = query.strip()[:80] or "New exploration"
     exploration = ExplorationSession(
         user_id=user_id,
         title=title,
@@ -1117,7 +1117,7 @@ async def get_exploration(
 ) -> tuple[ExplorationSession, list[ExplorationStep]]:
     exploration = await session.get(ExplorationSession, exploration_id)
     if exploration is None or exploration.user_id != user_id:
-        raise NotFoundError("探索记录不存在")
+        raise NotFoundError("Exploration record does not exist")
     steps = list(
         (
             await session.execute(

@@ -1,7 +1,7 @@
-"""alicecore 的并发、进度和断点适配层。
+"""The concurrency, progress and checkpoint adapter around alicecore.
 
-上游 DataEngine 只暴露整篇 extract；这里把抽取拆成独立 chunk 任务，
-每个 chunk 保存成功后立即持久化断点，暂停或重试时从最近确认的断点继续。
+The upstream DataEngine only exposes a whole-document extract; this splits the extraction into independent chunk tasks
+and persists a checkpoint as soon as each chunk succeeds, so a pause or a retry resumes from the last confirmed checkpoint.
 """
 
 from __future__ import annotations
@@ -29,13 +29,13 @@ StageCallback = Callable[[str], Awaitable[None]]
 log = get_logger("sag.incremental")
 
 _KNOWLEDGE_EVENT_REQUIREMENTS = """
-对于书籍、报告、论文等非新闻文档，“事项”也包括可独立理解的观点、事实、定义、
-机制、因果关系、论证和结论，不要求必须包含日期、人物动作或新闻事件。
-只有目录、页眉页脚、广告、乱码、纯链接，或确实与文档主题无关的片段才可返回空结果；
-正文只要包含可复用的知识，就至少保留一个有效的顶级事项。
-每个实体必须严格使用 {"type":"实体类型","name":"实体名称","description":"作用说明"}；
-禁止把实体类型写成字段名，例如不能输出
-{"location":"中东","name":"中东","description":"地区"}。
+For a book, report, paper or any non-news document, an "event" also covers a self-contained opinion, fact, definition,
+mechanism, causal relation, argument or conclusion; it need not carry a date, a person's action or a news event.
+Only a table of contents, a header or footer, an advertisement, garbled text, a link-only fragment, or a fragment genuinely unrelated to the document topic may return an empty result;
+as long as the body holds reusable knowledge, keep at least one valid top-level event.
+Every entity must strictly use {"type":"entity type","name":"entity name","description":"what it does here"};
+never write the entity type as the field name, for example do not output
+{"location":"the Middle East","name":"the Middle East","description":"a region"}.
 """.strip()
 
 
@@ -54,7 +54,7 @@ class _FallbackTitleMarkdownParser(MarkdownParser):
 
 
 def _llm_chat_owner(client: Any) -> Any:
-    """找到真正执行 chat 的最内层 alicecore 客户端。"""
+    """Find the innermost alicecore client that actually performs the chat."""
     current = client
     seen: set[int] = set()
     while id(current) not in seen:
@@ -122,7 +122,7 @@ def _normalize_event_entity_aliases(event: object, allowed_types: set[str]) -> i
     """Normalize only an unambiguous model typo before SAG validates schema.
 
     Some OpenAI-compatible models occasionally emit
-    ``{"location": "中东", "name": "中东", ...}`` instead of putting
+    ``{"location": "\u4e2d\u4e1c", "name": "\u4e2d\u4e1c", ...}`` instead of putting
     ``location`` in the required ``type`` field.  We only rewrite when there
     is exactly one unexpected key, that key is in this request's allowed type
     vocabulary, and its value equals ``name``; ambiguous or incomplete objects
@@ -234,7 +234,7 @@ class IncrementalDocumentProcessor:
         current = checkpoint.model_copy(deep=True)
         if not current.chunk_ids:
             if path is None:
-                raise RuntimeError("文档尚未切片，无法从断点继续")
+                raise RuntimeError("The document has not been chunked yet, so a checkpoint cannot be resumed")
             if on_stage:
                 await on_stage("loading")
             loader = (
@@ -338,14 +338,14 @@ class IncrementalDocumentProcessor:
                 for _ in range(worker_count):
                     group.create_task(worker())
         except ExceptionGroup as errors:
-            # TaskGroup 会把单块的 SAG/LLM 异常包成通用 ExceptionGroup；解包后
-            # EngineManager 才能映射可重试类型，文档与 Job 也能保存真实错误原因。
+            # A TaskGroup wraps a single chunk's SAG/LLM exception into a generic ExceptionGroup; unwrapping it lets
+            # EngineManager map the retryable type, and lets the document and Job record the real cause.
             raise _first_task_error(errors) from errors
 
     async def _extract_chunk(self, chunk_id: str) -> tuple[list[str], int]:
         template = getattr(self._engine, "_extractor", None)
         if template is None:
-            raise RuntimeError("抽取引擎尚未初始化")
+            raise RuntimeError("The extraction engine is not initialised yet")
         extractor = EventExtractor(
             prompt_manager=template.prompt_manager,
             model_config=template.model_config,
@@ -380,16 +380,16 @@ class IncrementalDocumentProcessor:
             )
             if normalized_entities:
                 log.info(
-                    "已归一化模型实体类型字段 chunk=%s count=%d",
+                    "Normalised the model's entity type fields chunk=%s count=%d",
                     chunk_id,
                     normalized_entities,
                 )
             return response
 
-        # alicecore 0.7.x 的批处理层会把单块异常记录成失败后返回空列表，调用方
-        # 因而无法区分“正常无事项”和“LLM/Schema 失败”。Muse 每次只交给这个
-        # extractor 一个 chunk，可以在实例边界记录原始异常并在 extract() 返回后
-        # 重新抛出，避免把失败块写入成功断点。无需修改 site-packages。
+        # The batch layer of alicecore 0.7.x records a single chunk's exception as a failure and returns an empty list, so the
+        # caller cannot tell "legitimately no event" from "an LLM/schema failure". Muse hands this extractor exactly one
+        # chunk at a time, so it can record the original exception at the instance boundary and re-raise it after extract()
+        # returns, which stops a failed chunk from being written into a successful checkpoint. No site-packages patch is needed.
         original_extract_from_chunk = getattr(extractor, "extract_from_chunk", None)
         if callable(original_extract_from_chunk):
 
@@ -397,7 +397,7 @@ class IncrementalDocumentProcessor:
                 nonlocal chunk_failure
                 try:
                     return await original_extract_from_chunk(*args, **kwargs)
-                except Exception as error:  # noqa: BLE001 - 保留 SAG 原始异常类型
+                except Exception as error:  # noqa: BLE001 - keep the original SAG exception type
                     chunk_failure = error
                     raise
 
@@ -421,10 +421,10 @@ class IncrementalDocumentProcessor:
         return [event.id for event in events], token_usage
 
     async def _restore_checkpoint_events(self, event_ids: list[str]) -> None:
-        """分块提交结束后，恢复当前断点已经产出的全部事件。
+        """After the chunked commits finish, restore every event the current checkpoint produced.
 
-        alicecore 每次保存都会替换整篇文章的事件；断点适配层逐块提交时，
-        后提交的块会把先前块的事件标为已删除，因此要按断点统一恢复。
+        Every alicecore save replaces the whole article's events; because the checkpoint adapter commits chunk by chunk,
+        a later chunk marks the earlier chunks' events deleted, so they are restored together per checkpoint.
         """
         if not event_ids:
             return

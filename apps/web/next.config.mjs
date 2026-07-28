@@ -10,11 +10,13 @@ const nextConfig = {
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   eslint: { ignoreDuringBuilds: true },
   async redirects() {
-    // v0.3 客户端形态：旧路由 → 新 IA
+    // The v0.3 client shape: old routes -> the new IA
     return [
-      { source: "/overview", destination: "/chat", permanent: false },
-      { source: "/assistants", destination: "/chat", permanent: false },
-      { source: "/assistants/:id", destination: "/chat", permanent: false },
+      { source: "/overview", destination: "/search", permanent: false },
+      { source: "/assistants", destination: "/search", permanent: false },
+      { source: "/assistants/:id", destination: "/search", permanent: false },
+      { source: "/chat", destination: "/search", permanent: false },
+      { source: "/chat/:path*", destination: "/search", permanent: false },
       { source: "/sources", destination: "/knowledge", permanent: false },
       { source: "/sources/:id", destination: "/knowledge/:id", permanent: false },
     ];

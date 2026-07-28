@@ -44,7 +44,7 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                 await client.post(
                     "/api/v1/sources",
                     headers=headers,
-                    json={"name": "时序图谱测试源"},
+                    json={"name": "\u65f6\u5e8f\u56fe\u8c31\u6d4b\u8bd5\u6e90"},
                 )
             ).json()
             source_id = source_body["id"]
@@ -74,15 +74,15 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
             base_time = datetime.now() - timedelta(days=1)
             session_factory = get_session_factory()
             async with session_factory() as session:
-                await session.merge(SourceConfig(id=source_config_id, name="时序图谱测试源"))
+                await session.merge(SourceConfig(id=source_config_id, name="\u65f6\u5e8f\u56fe\u8c31\u6d4b\u8bd5\u6e90"))
                 await session.merge(
-                    SourceConfig(id=foreign_source_config_id, name="异常跨源引用")
+                    SourceConfig(id=foreign_source_config_id, name="\u5f02\u5e38\u8de8\u6e90\u5f15\u7528")
                 )
                 session.add(
                     EntityType(
                         id=entity_type_id,
                         type=f"concept_{entity_type_id[:8]}",
-                        name="概念",
+                        name="\u6982\u5ff5",
                     )
                 )
                 session.add(
@@ -91,16 +91,16 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                         source_config_id=source_config_id,
                         entity_type_id=entity_type_id,
                         type="concept",
-                        name="SAG 动态图谱",
-                        normalized_name="sag动态图谱",
-                        description="有界、按需生长的知识图谱",
+                        name="SAG \u52a8\u6001\u56fe\u8c31",
+                        normalized_name="sag\u52a8\u6001\u56fe\u8c31",
+                        description="\u6709\u754c\u3001\u6309\u9700\u751f\u957f\u7684\u77e5\u8bc6\u56fe\u8c31",
                     )
                 )
                 await session.flush()
                 for index in range(23):
                     event_id = uuid.uuid4().hex
                     event_ids.append(event_id)
-                    # 每三条共享同一时间，验证复合游标的稳定 tie-break。
+                    # \u6bcf\u4e09\u6761\u5171\u4eab\u540c\u4e00\u65f6\u95f4\uff0c\u9a8c\u8bc1\u590d\u5408\u6e38\u6807\u7684\u7a33\u5b9a tie-break\u3002
                     event_time = base_time - timedelta(days=index // 3)
                     session.add(
                         SourceEvent(
@@ -108,10 +108,10 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                             source_config_id=source_config_id,
                             source_type="doc",
                             source_id="timeline-doc",
-                            title=f"时序事件 {index:02d}",
-                            summary="按时间和 ID 稳定分页。",
-                            content="测试内容",
-                            category="时序测试",
+                            title=f"\u65f6\u5e8f\u4e8b\u4ef6 {index:02d}",
+                            summary="\u6309\u65f6\u95f4\u548c ID \u7a33\u5b9a\u5206\u9875\u3002",
+                            content="\u6d4b\u8bd5\u5185\u5bb9",
+                            category="\u65f6\u5e8f\u6d4b\u8bd5",
                             chunk_id=f"chunk-{index}",
                             start_time=event_time,
                             created_time=event_time,
@@ -134,9 +134,9 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                             source_config_id=source_config_id,
                             entity_type_id=entity_type_id,
                             type="concept",
-                            name=f"关联主题 {index:02d}",
-                            normalized_name=f"关联主题{index:02d}",
-                            description="用于验证实体优先的时间分页。",
+                            name=f"\u5173\u8054\u4e3b\u9898 {index:02d}",
+                            normalized_name=f"\u5173\u8054\u4e3b\u9898{index:02d}",
+                            description="\u7528\u4e8e\u9a8c\u8bc1\u5b9e\u4f53\u4f18\u5148\u7684\u65f6\u95f4\u5206\u9875\u3002",
                         )
                     )
                     session.add(
@@ -153,8 +153,8 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                         source_config_id=foreign_source_config_id,
                         entity_type_id=entity_type_id,
                         type="concept",
-                        name="跨源实体",
-                        normalized_name="跨源实体",
+                        name="\u8de8\u6e90\u5b9e\u4f53",
+                        normalized_name="\u8de8\u6e90\u5b9e\u4f53",
                     )
                 )
                 session.add(
@@ -172,10 +172,10 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                         source_config_id=source_config_id,
                         source_type="doc",
                         source_id="timeline-doc",
-                        title="较早的历史事件",
-                        summary="应通过实体关系的游标分页继续抵达。",
-                        content="测试内容",
-                        category="时序测试",
+                        title="\u8f83\u65e9\u7684\u5386\u53f2\u4e8b\u4ef6",
+                        summary="\u5e94\u901a\u8fc7\u5b9e\u4f53\u5173\u7cfb\u7684\u6e38\u6807\u5206\u9875\u7ee7\u7eed\u62b5\u8fbe\u3002",
+                        content="\u6d4b\u8bd5\u5185\u5bb9",
+                        category="\u65f6\u5e8f\u6d4b\u8bd5",
                         chunk_id="chunk-old",
                         start_time=old_event_time,
                         created_time=old_event_time,
@@ -448,10 +448,10 @@ async def test_universe_real_store_statistics_and_keyset_cursor():
                         source_config_id=source_config_id,
                         source_type="doc",
                         source_id="late-doc",
-                        title="快照后迟到的历史事件",
-                        summary="开始时间虽早，写入时间晚于快照。",
-                        content="测试内容",
-                        category="时序测试",
+                        title="\u5feb\u7167\u540e\u8fdf\u5230\u7684\u5386\u53f2\u4e8b\u4ef6",
+                        summary="\u5f00\u59cb\u65f6\u95f4\u867d\u65e9\uff0c\u5199\u5165\u65f6\u95f4\u665a\u4e8e\u5feb\u7167\u3002",
+                        content="\u6d4b\u8bd5\u5185\u5bb9",
+                        category="\u65f6\u5e8f\u6d4b\u8bd5",
                         start_time=snapshot_time_db - timedelta(seconds=1),
                         created_time=snapshot_time_db + timedelta(seconds=1),
                     )
@@ -769,7 +769,7 @@ async def test_universe_timeline_orders_same_instant_book_by_narrative_rank():
                 await client.post(
                     "/api/v1/sources",
                     headers=headers,
-                    json={"name": "同刻书籍源"},
+                    json={"name": "\u540c\u523b\u4e66\u7c4d\u6e90"},
                 )
             ).json()
             source_id = source_body["id"]
@@ -795,12 +795,12 @@ async def test_universe_timeline_orders_same_instant_book_by_narrative_rank():
             chapter_ids = [f"{9 - rank}{uuid.uuid4().hex[:12]}" for rank in range(8)]
             session_factory = get_session_factory()
             async with session_factory() as session:
-                await session.merge(SourceConfig(id=source_config_id, name="同刻书籍源"))
+                await session.merge(SourceConfig(id=source_config_id, name="\u540c\u523b\u4e66\u7c4d\u6e90"))
                 session.add(
                     EntityType(
                         id=entity_type_id,
                         type=f"concept_{entity_type_id[:8]}",
-                        name="概念",
+                        name="\u6982\u5ff5",
                     )
                 )
                 session.add(
@@ -809,9 +809,9 @@ async def test_universe_timeline_orders_same_instant_book_by_narrative_rank():
                         source_config_id=source_config_id,
                         entity_type_id=entity_type_id,
                         type="concept",
-                        name="书中人物",
-                        normalized_name="书中人物",
-                        description="全书事件共享的实体",
+                        name="\u4e66\u4e2d\u4eba\u7269",
+                        normalized_name="\u4e66\u4e2d\u4eba\u7269",
+                        description="\u5168\u4e66\u4e8b\u4ef6\u5171\u4eab\u7684\u5b9e\u4f53",
                     )
                 )
                 await session.flush()
@@ -822,10 +822,10 @@ async def test_universe_timeline_orders_same_instant_book_by_narrative_rank():
                             source_config_id=source_config_id,
                             source_type="ARTICLE",
                             source_id="book-doc",
-                            title=f"章节 {rank:02d}",
-                            summary="整本书的事件共享同一导入时刻。",
-                            content="测试内容",
-                            category="书籍",
+                            title=f"\u7ae0\u8282 {rank:02d}",
+                            summary="\u6574\u672c\u4e66\u7684\u4e8b\u4ef6\u5171\u4eab\u540c\u4e00\u5bfc\u5165\u65f6\u523b\u3002",
+                            content="\u6d4b\u8bd5\u5185\u5bb9",
+                            category="\u4e66\u7c4d",
                             chunk_id=f"chunk-{rank // 2}",
                             rank=rank,
                             start_time=imported_at,

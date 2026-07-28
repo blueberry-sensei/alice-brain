@@ -1,4 +1,4 @@
-"""消息历史的有界 keyset 分页与 Agent 上下文装载上限。"""
+"""Bounded keyset pagination of the message history, and the Agent context loading cap."""
 
 from datetime import UTC, datetime
 
@@ -41,18 +41,18 @@ async def test_messages_use_signed_bounded_keyset_pages(monkeypatch):
                 await client.post(
                     f"/api/v1/agents/{agent['id']}/threads",
                     headers=headers,
-                    json={"title": "消息分页"},
+                    json={"title": "\u6d88\u606f\u5206\u9875"},
                 )
             ).json()
             other_thread = (
                 await client.post(
                     f"/api/v1/agents/{agent['id']}/threads",
                     headers=headers,
-                    json={"title": "其他会话"},
+                    json={"title": "\u5176\u4ed6\u4f1a\u8bdd"},
                 )
             ).json()
 
-            # 所有消息共用时间戳，强制分页依赖 id 作稳定的第二排序键。
+            # Every message shares a timestamp, forcing pagination to rely on id as the stable secondary sort key.
             created_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
             async with SessionLocal() as session:
                 session.add_all(
@@ -139,7 +139,7 @@ async def test_messages_use_signed_bounded_keyset_pages(monkeypatch):
                 await client.get(base, headers=headers, params={"cursor": "unsigned.invalid"})
             ).status_code == 422
 
-            # 提示词历史是另一条有界查询：只装载最近 N 条，并保持正向顺序。
+            # The prompt history is another bounded query: it loads only the most recent N and keeps them in forward order.
             monkeypatch.setattr(settings, "history_load_limit", 5)
             async with SessionLocal() as session:
                 history = await _history(

@@ -87,7 +87,7 @@ async def _delete_vectors(records: DeletedDocumentRecords) -> None:
         try:
             await _delete_vector_ids(client, index, ids)
         except Exception as error:  # noqa: BLE001 - relational data remains authoritative
-            log.warning("向量派生数据清理失败 index=%s count=%d: %s", index, len(ids), error)
+            log.warning("Cleaning up the vector-derived data failed index=%s count=%d: %s", index, len(ids), error)
 
 
 async def delete_document_records(

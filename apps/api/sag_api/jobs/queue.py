@@ -1,7 +1,7 @@
-"""任务队列抽象。
+"""Task queue abstraction.
 
-MVP 用进程内 asyncio 队列（`InProcessAsyncQueue`）；接口保持精简，
-未来可实现 Celery / RQ / Arq 等分布式后端而不影响调用方。
+The MVP uses an in-process asyncio queue (`InProcessAsyncQueue`); the interface stays small so a
+distributed backend such as Celery / RQ / Arq can be added later without touching callers.
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from abc import ABC, abstractmethod
 class JobQueue(ABC):
     @abstractmethod
     async def enqueue(self, job_id: str) -> None:
-        """把一个已持久化的 Job 投入队列等待执行。"""
+        """Put an already persisted Job on the queue to await execution."""
 
-    async def start(self) -> None:  # noqa: B027 - 可选生命周期钩子
-        """启动后台 worker（如有）。"""
+    async def start(self) -> None:  # noqa: B027 - optional lifecycle hook
+        """Start the background workers (if any)."""
 
     async def stop(self) -> None:  # noqa: B027
-        """优雅停止 worker。"""
+        """Stop the workers gracefully."""

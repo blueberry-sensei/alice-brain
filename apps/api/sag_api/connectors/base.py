@@ -1,12 +1,12 @@
-"""连接器抽象 —— 采集层的可插拔接口。
+"""Connector abstraction - the pluggable interface of the ingestion layer.
 
-一个「连接器」负责把外部信息源变成可交给引擎处理的本地文件：
+A "connector" turns an external information source into local files the engine can process:
 
-- **静态**（如文件上传）：文档由用户直接推送，`supports_sync=False`。
-- **动态**（如 Web / Notion / S3，后续拓展）：实现 `discover()` 列举远端文档、
-  `fetch()` 拉取到本地，由 `sync_source` 任务周期性调用。
+- **static** (such as file upload): the user pushes documents directly, `supports_sync=False`.
+- **dynamic** (such as Web / Notion / S3, to be added): implement `discover()` to enumerate remote documents and
+  `fetch()` to pull them locally; the `sync_source` task calls them periodically.
 
-新增连接器 = 继承 `Connector` 实现方法 + 在 `registry` 注册，无需改动上层逻辑。
+Adding a connector = subclass `Connector`, implement the methods, register it in `registry` - no upper-layer change needed.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from sag_api.enums import ConnectorKind
 
 @dataclass
 class ConfigField:
-    """连接器配置项描述（供前端动态渲染表单）。"""
+    """Description of a connector configuration field (so the frontend can render the form dynamically)."""
 
     key: str
     label: str
@@ -50,7 +50,7 @@ class ConnectorMeta:
 
 @dataclass
 class DiscoveredDoc:
-    """动态连接器发现的一篇远端文档。"""
+    """A remote document discovered by a dynamic connector."""
 
     external_id: str
     filename: str
@@ -60,7 +60,7 @@ class DiscoveredDoc:
 
 @dataclass
 class LocalFile:
-    """已落到本地、可交给引擎 ingest 的文件。"""
+    """A file already stored locally, ready for the engine to ingest."""
 
     path: str
     filename: str
@@ -69,22 +69,22 @@ class LocalFile:
 
 
 class Connector(ABC):
-    """所有连接器的基类。"""
+    """Base class of every connector."""
 
     meta: ConnectorMeta
 
     def validate_config(self, config: dict[str, Any]) -> None:
-        """校验信源配置；不合法时抛 `ValidationError`。默认校验必填项。"""
+        """Validate the source configuration; raise `ValidationError` when it is invalid. Required fields are checked by default."""
         from sag_api.core.errors import ValidationError
 
         for f in self.meta.config_fields:
             if f.required and not (config or {}).get(f.key):
-                raise ValidationError(f"缺少必填配置项：{f.label}（{f.key}）")
+                raise ValidationError(f"Missing required configuration field: {f.label} ({f.key})")
 
     async def discover(self, config: dict[str, Any]) -> list[DiscoveredDoc]:
-        """列举远端文档（动态连接器实现）。"""
+        """Enumerate remote documents (implemented by dynamic connectors)."""
         raise NotImplementedError
 
     async def fetch(self, config: dict[str, Any], doc: DiscoveredDoc) -> LocalFile:
-        """把一篇远端文档拉取到本地（动态连接器实现）。"""
+        """Pull one remote document to local storage (implemented by dynamic connectors)."""
         raise NotImplementedError

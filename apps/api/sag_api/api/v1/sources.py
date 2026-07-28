@@ -25,7 +25,7 @@ from sag_api.services.source_service import (
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 
-# 注意：静态路由须在 /{source_id} 之前声明
+# Note: static routes must be declared before /{source_id}
 @router.get("/connectors", response_model=list[ConnectorOut])
 async def list_connectors() -> list[ConnectorOut]:
     return [ConnectorOut(**c.meta.to_public()) for c in registry.all()]
@@ -88,7 +88,7 @@ async def delete_(
         upload_dir=settings.upload_dir,
         job_queue=job_queue,
     )
-    return Ok(detail="信源已删除")
+    return Ok(detail="Source deleted")
 
 
 @router.get("/{source_id}/chunks/{chunk_id}")
@@ -99,13 +99,13 @@ async def get_chunk(
     session: AsyncSession = Depends(get_session),
     engine_manager: EngineManager = Depends(get_engine_manager),
 ) -> dict:
-    """引用溯源：读取某分块的完整原文。"""
+    """Citation provenance: read one chunk's full raw text."""
     from sag_api.core.errors import NotFoundError
 
     source = await get_source(session, source_id)
     chunk = await engine_manager.get_chunk(source.sag_source_config_id, chunk_id, source=source)
     if chunk is None:
-        raise NotFoundError("原文分块不存在")
+        raise NotFoundError("The raw chunk does not exist")
     return {**chunk.model_dump(), "source_id": source.id, "source_name": source.name}
 
 
@@ -116,7 +116,7 @@ async def mcp_descriptor(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """信源即 MCP：返回把该信源挂进外部宿主（Claude Desktop / Cursor）的连接信息。"""
+    """A source is an MCP endpoint: returns the details for mounting it in an external host (Claude Desktop / Cursor)."""
     source = await get_source(session, source_id)
     base = str(request.base_url).rstrip("/")
     return {
@@ -129,15 +129,15 @@ async def mcp_descriptor(
             "url": f"{base}/mcp/?source_id={source.id}",
             "headers": {"Authorization": "Bearer <SAG_TOKEN>"},
             "note": (
-                "在支持 Streamable HTTP MCP 的宿主中填此 URL；"
-                "Dify 配置可使用 transport=streamable_http，并在 Authorization 头携带 Bearer <token>。"
+                "Enter this URL in a host that speaks Streamable HTTP MCP; "
+                "Dify can use transport=streamable_http and carry Bearer <token> in the Authorization header."
             ),
         },
         "stdio": {
             "command": "python",
             "args": ["-m", "sag_api.mcp.server"],
             "env": {"SAG_MCP_SOURCE_ID": source.id},
-            "note": "面向仅支持 stdio 的宿主；需在 apps/api 的 Python 环境下运行。",
+            "note": "For hosts that only speak stdio; it must run inside the Python environment of apps/api.",
         },
     }
 

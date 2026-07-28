@@ -1,4 +1,4 @@
-"""认证与用户领域逻辑（单用户）。"""
+"""Authentication and user domain logic (single user)."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ async def register_user(session: AsyncSession, *, email: str, password: str, nam
 
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
-        raise ConflictError("该邮箱已注册")
+        raise ConflictError("That email is already registered")
 
-    # 个人向：首个注册即唯一账号；注册关闭时仅放行首个用户（部署引导）
+    # Personal use: the first registration is the only account; when registration is closed only the first user is let through (deployment bootstrap)
     user_count = await session.scalar(select(func.count()).select_from(User)) or 0
     if user_count > 0 and not settings.allow_registration:
-        raise ForbiddenError("注册已关闭")
+        raise ForbiddenError("Registration is closed")
 
     user = User(
         email=email,
@@ -36,9 +36,9 @@ async def register_user(session: AsyncSession, *, email: str, password: str, nam
 async def authenticate(session: AsyncSession, *, email: str, password: str) -> User:
     user = await session.scalar(select(User).where(User.email == email))
     if user is None or not verify_password(password, user.password_hash):
-        raise AuthError("邮箱或密码错误")
+        raise AuthError("Wrong email or password")
     if not user.is_active:
-        raise ForbiddenError("账号已停用")
+        raise ForbiddenError("The account is deactivated")
     return user
 
 
@@ -71,9 +71,9 @@ async def authenticate_or_register(
 
     if user is not None:
         if password_supplied and not verify_password(password, user.password_hash):
-            raise AuthError("身份验证失败")
+            raise AuthError("Authentication failed")
         if not user.is_active:
-            raise ForbiddenError("账号已停用")
+            raise ForbiddenError("The account is deactivated")
         if rename_local_user:
             user.name = name
             await session.commit()
@@ -81,7 +81,7 @@ async def authenticate_or_register(
         return user
 
     if not name:
-        raise ValidationError("请先填写名字")
+        raise ValidationError("Please fill in your name first")
 
     user = User(
         email=email,

@@ -1,4 +1,4 @@
-"""快速单元测试：无需网络 / 引擎。"""
+"""\u5feb\u901f\u5355\u5143\u6d4b\u8bd5\uff1a\u65e0\u9700\u7f51\u7edc / \u5f15\u64ce\u3002"""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -202,11 +202,11 @@ def test_document_output_redacts_database_details():
         "updated_at": datetime.now(UTC),
     }
     document = DocumentOut.model_validate(payload)
-    assert document.error == "信息源初始化未完成，文档尚未入库，请重试。"
+    assert document.error == "The source has not finished initialising, so the document is not stored yet; please retry."
 
-    payload["error"] = "解析服务暂时不可用"
+    payload["error"] = "The parsing service is temporarily unavailable"
     document = DocumentOut.model_validate(payload)
-    assert document.error == "解析服务暂时不可用"
+    assert document.error == "The parsing service is temporarily unavailable"
 
 
 @pytest.mark.asyncio
@@ -317,7 +317,7 @@ async def test_native_provider_stream_keeps_text_usage_and_tool_calls(monkeypatc
                 choices=[
                     SimpleNamespace(
                         finish_reason=None,
-                        delta=SimpleNamespace(content="先查询", tool_calls=[]),
+                        delta=SimpleNamespace(content="\u5148\u67e5\u8be2", tool_calls=[]),
                     )
                 ]
             )
@@ -368,7 +368,7 @@ async def test_native_provider_stream_keeps_text_usage_and_tool_calls(monkeypatc
         )
     )
     request = ModelRequest(
-        messages=(AgentMessage(role="user", content="查询 SAG"),),
+        messages=(AgentMessage(role="user", content="\u67e5\u8be2 SAG"),),
         tools=(
             {
                 "type": "function",
@@ -387,7 +387,7 @@ async def test_native_provider_stream_keeps_text_usage_and_tool_calls(monkeypatc
     assert seen["model"] == "gemini/gemini-3.5-flash"
     assert seen["tool_choice"] == "required"
     assert chunks[0].usage is not None and chunks[0].usage.total_tokens == 10
-    assert chunks[1].text_delta == "先查询"
+    assert chunks[1].text_delta == "\u5148\u67e5\u8be2"
     assert chunks[-1].finish_reason == "tool_calls"
     assert chunks[-1].tool_calls[0].name == "search_context"
     assert chunks[-1].tool_calls[0].arguments == {"query": "SAG"}
@@ -430,8 +430,8 @@ def test_prompt_and_citations():
     sections = [
         RetrievedSection(
             chunk_id="c1",
-            heading="创立",
-            content="Acme 由张三创立。这是用于引用预览的补充正文。",
+            heading="\u521b\u7acb",
+            content="Acme \u7531\u5f20\u4e09\u521b\u7acb\u3002\u8fd9\u662f\u7528\u4e8e\u5f15\u7528\u9884\u89c8\u7684\u8865\u5145\u6b63\u6587\u3002",
             score=0.8,
             rank=0,
             source_config_id="sc-1",
@@ -449,24 +449,24 @@ def test_prompt_and_citations():
                 source_id="doc-1",
                 source_config_id="sc-1",
                 chunk_id="c1",
-                title="Acme 宣布创立",
-                summary="张三完成了 Acme 的创立。",
-                content="张三完成公司注册，并正式宣布 Acme 成立。",
-                category="公司事件",
+                title="Acme \u5ba3\u5e03\u521b\u7acb",
+                summary="\u5f20\u4e09\u5b8c\u6210\u4e86 Acme \u7684\u521b\u7acb\u3002",
+                content="\u5f20\u4e09\u5b8c\u6210\u516c\u53f8\u6ce8\u518c\uff0c\u5e76\u6b63\u5f0f\u5ba3\u5e03 Acme \u6210\u7acb\u3002",
+                category="\u516c\u53f8\u4e8b\u4ef6",
                 start_time=datetime(2026, 7, 21, tzinfo=UTC),
             )
         ],
     )
-    assert cites[0]["n"] == 1 and cites[0]["heading"] == "创立"
-    assert cites[0]["snippet"] == "Acme 由张三创立。这是用于引用预览的补充正文。"
+    assert cites[0]["n"] == 1 and cites[0]["heading"] == "\u521b\u7acb"
+    assert cites[0]["snippet"] == "Acme \u7531\u5f20\u4e09\u521b\u7acb\u3002\u8fd9\u662f\u7528\u4e8e\u5f15\u7528\u9884\u89c8\u7684\u8865\u5145\u6b63\u6587\u3002"
     assert "summary" not in cites[0]
     assert cites[0]["event_refs"] == [
         {
             "id": "event-1",
-            "title": "Acme 宣布创立",
-            "summary": "张三完成了 Acme 的创立。",
-            "content": "张三完成公司注册，并正式宣布 Acme 成立。",
-            "category": "公司事件",
+            "title": "Acme \u5ba3\u5e03\u521b\u7acb",
+            "summary": "\u5f20\u4e09\u5b8c\u6210\u4e86 Acme \u7684\u521b\u7acb\u3002",
+            "content": "\u5f20\u4e09\u5b8c\u6210\u516c\u53f8\u6ce8\u518c\uff0c\u5e76\u6b63\u5f0f\u5ba3\u5e03 Acme \u6210\u7acb\u3002",
+            "category": "\u516c\u53f8\u4e8b\u4ef6",
             "start_time": "2026-07-21T00:00:00+00:00",
         }
     ]
@@ -483,7 +483,7 @@ def test_citation_events_use_source_and_chunk_composite_key_and_are_bounded():
             source_id="doc-a",
             source_config_id="source-a",
             chunk_id="same",
-            title=f"A 事件 {index}",
+            title=f"A \u4e8b\u4ef6 {index}",
         )
         for index in range(4)
     ] + [
@@ -492,7 +492,7 @@ def test_citation_events_use_source_and_chunk_composite_key_and_are_bounded():
             source_id="doc-b",
             source_config_id="source-b",
             chunk_id="same",
-            title="B 事件",
+            title="B \u4e8b\u4ef6",
         )
     ]
 
@@ -563,13 +563,13 @@ async def test_engine_extract_compat_repairs_missing_is_valid():
                     "meta": {"reason": "ok"},
                     "items": [
                         {
-                            "title": "顶层事项",
-                            "content": "事项内容",
+                            "title": "\u9876\u5c42\u4e8b\u9879",
+                            "content": "\u4e8b\u9879\u5185\u5bb9",
                             "references": [1],
                             "children": [
                                 {
-                                    "title": "子事项",
-                                    "content": "子事项内容",
+                                    "title": "\u5b50\u4e8b\u9879",
+                                    "content": "\u5b50\u4e8b\u9879\u5185\u5bb9",
                                     "references": [1],
                                 }
                             ],
@@ -623,14 +623,14 @@ async def test_engine_extract_compat_repairs_missing_is_valid():
 
 def test_agent_name_is_injected_into_prompt():
     messages = build_agent_messages(
-        "小跃",
-        {"system_prompt": "保持严谨。"},
-        "你叫什么？",
-        language="zh",
+        "Alice",
+        {"system_prompt": "Luôn nghiêm túc."},
+        "Bạn tên gì?",
+        language="vi",
     )
     system = messages[0]["content"]
-    assert "你的名字是「小跃」" in system
-    assert "保持严谨。" in system
+    assert "Tên của bạn là Alice" in system
+    assert "Luôn nghiêm túc." in system
     assert "sag" not in system.lower()
 
 

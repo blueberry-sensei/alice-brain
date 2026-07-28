@@ -1,7 +1,7 @@
-"""进程内 asyncio 任务队列 —— 随 API 进程起停。
+"""In-process asyncio task queue - starts and stops with the API process.
 
-- N 个 worker 协程从队列取 job_id，加载 Job，维护状态机并分发处理器。
-- 启动时「恢复」上次残留的 QUEUED/RUNNING 任务（RUNNING 重置为 QUEUED 重跑）。
+- N worker coroutines take a job_id off the queue, load the Job, maintain the state machine and dispatch a handler.
+- At startup it "recovers" QUEUED/RUNNING tasks left over from last time (RUNNING is reset to QUEUED and rerun).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from sag_api.sag import EngineManager
 
 log = get_logger("jobs")
 
-# 退避基数（秒）：第 n 次重试等待 base**n。测试可 monkeypatch 缩短。
+# Backoff base (seconds): the nth retry waits base**n. Tests may monkeypatch this to shorten it.
 _BACKOFF_BASE_SECONDS = 2.0
 _RECOVERY_LOCK_RETRIES = 4
 
@@ -34,7 +34,7 @@ def _now() -> datetime:
 
 
 def _is_retryable(exc: Exception) -> bool:
-    """瞬时故障（限流/超时/上游暂不可用）可重试；输入/配置类错误不重试。"""
+    """Transient failures (rate limit / timeout / upstream temporarily down) are retryable; input and configuration errors are not."""
     return isinstance(exc, (ServiceUnavailableError, UpstreamError))
 
 
@@ -59,7 +59,7 @@ class InProcessAsyncQueue(JobQueue):
         await self._queue.put(job_id)
 
     def _schedule_retry(self, job_id: str, delay: float) -> None:
-        """退避后重新入队（不阻塞 worker）。"""
+        """Re-enqueue after the backoff (without blocking the worker)."""
 
         async def _later() -> None:
             try:
@@ -87,7 +87,7 @@ class InProcessAsyncQueue(JobQueue):
         except BaseException:
             await self.stop()
             raise
-        log.info("任务队列已启动（并发=%d）", self._concurrency)
+        log.info("Task queue started (concurrency=%d)", self._concurrency)
 
     async def stop(self) -> None:
         retry_tasks = list(self._retry_tasks)
@@ -134,7 +134,7 @@ class InProcessAsyncQueue(JobQueue):
         for job in rows:
             await self._queue.put(job.id)
         if rows:
-            log.info("恢复 %d 个未完成任务", len(rows))
+            log.info("Recovering %d unfinished tasks", len(rows))
 
     async def _worker_loop(self, idx: int) -> None:
         while True:
@@ -144,7 +144,7 @@ class InProcessAsyncQueue(JobQueue):
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                log.exception("worker#%d 处理 job=%s 异常", idx, job_id)
+                log.exception("worker#%d failed while processing job=%s", idx, job_id)
             finally:
                 self._queue.task_done()
 
@@ -153,8 +153,8 @@ class InProcessAsyncQueue(JobQueue):
 
         async with self._session_factory() as session:
             job = await session.get(Job, job_id)
-            # 队列里可能残留暂停前的 job_id，也可能被重复 enqueue；只有 QUEUED
-            # 才能启动，避免同一任务被两个 worker 同时执行。
+            # The queue may still hold a job_id from before a pause, or the job may have been enqueued twice; only QUEUED
+            # may start, so the same task can never run in two workers at once.
             if job is None or job.status != JobStatus.QUEUED:
                 return
             universe_user_id = (
@@ -200,7 +200,7 @@ class InProcessAsyncQueue(JobQueue):
             handler = TASK_HANDLERS.get(job.type)
             if handler is None:
                 job.status = JobStatus.FAILED
-                job.error = f"未知任务类型：{job.type}"
+                job.error = f"Unknown task type: {job.type}"
                 job.finished_at = _now()
                 await session.commit()
                 return
@@ -221,7 +221,7 @@ class InProcessAsyncQueue(JobQueue):
                     job.status = JobStatus.PAUSED
                     job.finished_at = None
                     job.error = None
-                    log.info("任务已暂停 job=%s progress=%.0f%%", job_id, job.progress * 100)
+                    log.info("Task paused job=%s progress=%.0f%%", job_id, job.progress * 100)
             except Exception as e:  # noqa: BLE001
                 await session.rollback()
                 job = await session.get(Job, job_id)
@@ -230,19 +230,19 @@ class InProcessAsyncQueue(JobQueue):
                 retry = job is not None and _is_retryable(e) and attempts < settings.job_max_attempts
                 if job is not None:
                     if retry:
-                        # 退避重排：状态回 QUEUED，延迟 base**attempts 秒后重新入队
+                        # Backoff rescheduling: state goes back to QUEUED and it is re-enqueued after base**attempts seconds
                         job.status = JobStatus.QUEUED
                         job.progress = 0.0
-                        job.error = f"第 {attempts} 次失败，将重试：{msg}"
+                        job.error = f"Failure {attempts}, will retry: {msg}"
                         delay = _BACKOFF_BASE_SECONDS**attempts
                         self._schedule_retry(job_id, delay)
                         log.warning(
-                            "任务可重试 job=%s（第 %d/%d 次），%.1fs 后重排：%s",
+                            "Task is retryable job=%s (attempt %d/%d), rescheduling in %.1fs: %s",
                             job_id, attempts, settings.job_max_attempts, delay, msg,
                         )
                     else:
                         job.status = JobStatus.FAILED
                         job.error = msg
                         job.finished_at = _now()
-                        log.warning("任务失败 job=%s（尝试 %d 次）：%s", job_id, attempts, msg)
+                        log.warning("Task failed job=%s (after %d attempts): %s", job_id, attempts, msg)
             await session.commit()

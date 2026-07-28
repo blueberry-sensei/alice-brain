@@ -43,7 +43,7 @@ function connectionIcon(mode: ParsedMcpServer["mode"]) {
   return mode === "http" ? <Globe2 className="size-3" /> : <Terminal className="size-3" />;
 }
 
-/** 默认助手挂载的外部 MCP 服务。 */
+/** The external MCP services the default assistant mounts. */
 export function McpSettingsCard() {
   const t = useTranslations("McpSettings");
   const { agent } = useApp();

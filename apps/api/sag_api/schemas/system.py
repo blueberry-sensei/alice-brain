@@ -6,6 +6,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, Field, field_validator
 
 from sag_api.core.model_providers import ModelProviderId
+from sag_api.core.sub_agent_providers import (
+    SUB_AGENT_PROVIDERS,
+    DiscoverableSubAgentProviderId,
+    SubAgentProviderId,
+    get_sub_agent_provider,
+)
 from sag_api.enums import SearchStrategy
 
 
@@ -19,8 +25,68 @@ class SystemPreferencesUpdate(BaseModel):
         try:
             ZoneInfo(normalized)
         except (ZoneInfoNotFoundError, ValueError) as error:
-            raise ValueError("必须使用有效的 IANA 时区，例如 Asia/Shanghai") from error
+            raise ValueError("Phải dùng múi giờ IANA hợp lệ, ví dụ Asia/Ho_Chi_Minh") from error
         return normalized
+
+
+class SubAgentEntry(BaseModel):
+    """Một slot sub-agent trên UI; credential rỗng nghĩa là giữ bản đã lưu."""
+
+    provider: SubAgentProviderId
+    model: str = Field(default="", max_length=200)
+    credential: str | None = Field(default=None, max_length=4096)
+    provider_name: str = Field(default="", max_length=100)
+    base_url: str | None = Field(default=None, max_length=500)
+    enabled: bool = False
+
+    @field_validator("model", "provider_name")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("base_url", "credential")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class SubAgentConfigUpdate(BaseModel):
+    """Danh sách xuất hiện thì thay toàn bộ sáu slot cấu hình."""
+
+    entries: list[SubAgentEntry] = Field(max_length=len(SUB_AGENT_PROVIDERS))
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(cls, entries: list[SubAgentEntry]) -> list[SubAgentEntry]:
+        seen: set[str] = set()
+        for entry in entries:
+            if entry.provider in seen:
+                raise ValueError(f"provider sub-agent bị trùng: {entry.provider}")
+            seen.add(entry.provider)
+            spec = get_sub_agent_provider(entry.provider)
+            if entry.enabled and not entry.model:
+                raise ValueError(f"{spec.display_name} cần chọn model")
+            if spec.custom_model and entry.enabled and not entry.provider_name:
+                raise ValueError("Custom provider cần tên provider")
+        return entries
+
+
+class SubAgentModelDiscoveryRequest(BaseModel):
+    """Lấy model live bằng key mới, hoặc để trống để dùng key đã mã hoá trong DB."""
+
+    provider: DiscoverableSubAgentProviderId
+    credential: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("credential")
+    @classmethod
+    def strip_discovery_credential(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class LLMProviderEntry(BaseModel):
@@ -51,10 +117,10 @@ class LLMProviderEntry(BaseModel):
 
 
 class ModelConfigUpdate(BaseModel):
-    """模型与知识库配置的部分更新（未出现的字段保持不变）。
+    """Partial update of the model and knowledge-base configuration (fields that do not appear stay unchanged).
 
-    密钥字段留空表示「保持原值」（不清空）；base_url / dimensions 留空表示清除。
-    `llm_providers` 出现时**整体替换**优先级链。
+    An empty secret field means "keep the current value" (it is not cleared); an empty base_url / dimensions means clear it.
+    When `llm_providers` appears it **replaces the whole** priority chain.
     """
 
     llm_providers: list[LLMProviderEntry] | None = Field(default=None, max_length=20)
@@ -89,21 +155,21 @@ class ModelConfigUpdate(BaseModel):
     @classmethod
     def reject_null_document_numbers(cls, value: int | None) -> int:
         if value is None:
-            raise ValueError("知识库解析参数不能为 null")
+            raise ValueError("Knowledge-base parsing parameters cannot be null")
         return value
 
     @field_validator("document_chunk_mode")
     @classmethod
     def reject_null_chunk_mode(cls, value: str | None) -> str:
         if value is None:
-            raise ValueError("切片模式不能为 null")
+            raise ValueError("Chunking mode cannot be null")
         return value
 
     @field_validator("llm_timeout_ms", "llm_max_retries")
     @classmethod
     def reject_null_llm_resilience_fields(cls, value: int | None) -> int:
         if value is None:
-            raise ValueError("模型超时与重试次数不能为 null")
+            raise ValueError("Model timeout and retry count cannot be null")
         return value
 
     @field_validator("llm_providers")

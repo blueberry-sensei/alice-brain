@@ -1,4 +1,4 @@
-"""信源领域逻辑（单用户，扁平）。"""
+"""Source domain logic (single user, flat)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ async def search_source_candidates(
         ordered_ids = list(dict.fromkeys(source_ids))
         if len(ordered_ids) > limit:
             raise ValidationError(
-                f"单次最多检索 {limit} 个信息源，请通过 @ 缩小范围",
+                f"At most {limit} sources can be searched at once, please narrow the scope with @",
                 code="too_many_search_sources",
             )
         rows = await session.execute(select(Source).where(Source.id.in_(ordered_ids)))
@@ -65,7 +65,7 @@ async def search_source_candidates(
 async def get_source(session: AsyncSession, source_id: str) -> Source:
     source = await session.get(Source, source_id)
     if source is None:
-        raise NotFoundError("信源不存在")
+        raise NotFoundError("Source does not exist")
     return source
 
 
@@ -88,11 +88,11 @@ async def create_source(
     await session.commit()
     await session.refresh(source)
 
-    # 预建引擎 schema（幂等）；失败不阻断创建，处理文档时会重试
+    # Pre-build the engine schema (idempotent); a failure does not block creation and is retried while processing documents
     try:
         await engine_manager.provision(source.sag_source_config_id, source)
     except ApiError as e:
-        log.warning("信源引擎预建失败 %s：%s", source.sag_source_config_id, e.message)
+        log.warning("Source engine pre-build failed %s: %s", source.sag_source_config_id, e.message)
     return source
 
 
@@ -131,11 +131,11 @@ async def delete_source(
     upload_dir: str,
     job_queue: JobQueue | None = None,
 ) -> None:
-    """删除信源并收尾：移除悬挂绑定、关闭引擎槽、清理上传文件。"""
+    """Delete a source and tidy up: remove dangling bindings, close the engine slot, clean uploaded files."""
     source = await get_source(session, source_id)
     sag_id = source.sag_source_config_id
 
-    # 悬挂绑定清理（target_id 为普通字符串，无 FK 级联）
+    # Dangling binding cleanup (target_id is a plain string, there is no FK cascade)
     await session.execute(
         AgentBinding.__table__.delete().where(
             AgentBinding.target_type == BindingTargetType.SOURCE,
@@ -145,7 +145,7 @@ async def delete_source(
     await session.delete(source)
     await session.commit()
 
-    # 引擎槽关闭 + 上传目录清理（尽力而为，不阻断删除）
+    # Engine slot shutdown + upload directory cleanup (best effort, never blocks the delete)
     await engine_manager.release(sag_id)
     shutil.rmtree(os.path.join(upload_dir, source_id), ignore_errors=True)
     from sag_api.services.universe_service import schedule_universe_refresh
@@ -159,11 +159,11 @@ async def delete_source(
 
 
 async def sync_source(session: AsyncSession, source_id: str, *, job_queue: JobQueue) -> Job:
-    """触发一次动态连接器同步（如网页抓取）。"""
+    """Trigger one dynamic connector sync (for example a web fetch)."""
     source = await get_source(session, source_id)
     connector = registry.get(source.connector_kind)
     if not connector.meta.supports_sync:
-        raise ValidationError("该连接器不支持同步")
+        raise ValidationError("This connector does not support syncing")
     job = Job(type=JobType.SYNC_SOURCE, source_id=source.id, status=JobStatus.QUEUED)
     session.add(job)
     await session.commit()

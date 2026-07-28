@@ -1,12 +1,12 @@
-"""把 SAG 知识库 MCP 作为 Streamable-HTTP 端点挂进 FastAPI。
+"""Mount the SAG knowledge-base MCP into FastAPI as a Streamable-HTTP endpoint.
 
-外部宿主（Claude Desktop / Cursor）可挂载：
+External hosts (Claude Desktop / Cursor) can mount:
 
-    http://<host>/mcp/                         # 整个知识库
-    http://<host>/mcp/?source_id=<信源 id>     # 单个信源
+    http://<host>/mcp/                          # the whole knowledge base
+    http://<host>/mcp/?source_id=<source id>    # a single source
 
-请求先校验 JWT，再根据可选的 `source_id` 载入一个或全部 Source 并注入 contextvar。
-作用域随请求隔离，外部宿主与进程内 agent 可共用同一 server。
+A request is authenticated by JWT first, then one or every Source is loaded according to the optional
+`source_id` and injected into a contextvar. The scope is isolated per request, so external hosts and the in-process agent can share one server.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _bearer(scope) -> str | None:
 
 
 class ScopedKnowledgeMCP:
-    """ASGI 包装：鉴权并注入全库或单信源作用域，再委托给 MCP 应用。"""
+    """ASGI wrapper: authenticate, inject the whole-library or single-source scope, then delegate to the MCP app."""
 
     def __init__(self, parent_app: FastAPI, mcp_asgi) -> None:
         self._parent = parent_app
@@ -69,12 +69,12 @@ class ScopedKnowledgeMCP:
 
         token = _bearer(scope)
         if not token:
-            await _send_json(send, 401, {"error": "缺少认证令牌"})
+            await _send_json(send, 401, {"error": "Missing authentication token"})
             return
         try:
             decode_token(token)
         except jwt.PyJWTError:
-            await _send_json(send, 401, {"error": "令牌无效或已过期"})
+            await _send_json(send, 401, {"error": "Token is invalid or expired"})
             return
 
         async with SessionLocal() as session:
@@ -83,7 +83,7 @@ class ScopedKnowledgeMCP:
                 statement = statement.where(Source.id == source_id)
             sources = tuple((await session.execute(statement)).scalars().all())
         if source_id and not sources:
-            await _send_json(send, 404, {"error": "信源不存在"})
+            await _send_json(send, 404, {"error": "Source does not exist"})
             return
 
         engine_manager = self._parent.state.engine_manager
@@ -92,19 +92,19 @@ class ScopedKnowledgeMCP:
 
 
 def attach_source_mcp(app: FastAPI) -> FastMCP:
-    """构造 HTTP 版知识库 MCP 并挂到 `/mcp`。
+    """Build the HTTP knowledge-base MCP and mount it at `/mcp`.
 
-    内层 FastMCP 的路由改到根 `/`，外层用 `Mount("/mcp")` 承接——避免 `/mcp` 内再套 `/mcp`
-    的双重路径。外部宿主使用带斜杠的 `/mcp/`；`source_id` 仅用于可选的单源兼容模式。
+    The inner FastMCP routes at the root `/` and the outer layer takes over with `Mount("/mcp")` - that avoids a
+    doubled `/mcp` inside `/mcp`. External hosts use `/mcp/` with the trailing slash; `source_id` only drives the optional single-source compatibility mode.
     """
-    # FastMCP 默认把 host=127.0.0.1 解释为“只接受 localhost Host”。
-    # 该 ASGI 应用实际挂在可通过局域网/反向代理访问的 FastAPI 下，并在外层强制
-    # Bearer 鉴权，因此关闭 SDK 的 localhost 专用 Host 白名单。
+    # FastMCP by default reads host=127.0.0.1 as "only accept a localhost Host header".
+    # This ASGI app actually sits under a FastAPI reachable over the LAN or a reverse proxy, and the outer
+    # layer enforces Bearer authentication, so the SDK's localhost-only Host allowlist is turned off.
     mcp = build_source_mcp(
         stateless_http=True,
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
     mcp.settings.streamable_http_path = "/"
-    mcp_asgi = mcp.streamable_http_app()  # 惰性创建 session_manager
+    mcp_asgi = mcp.streamable_http_app()  # lazily creates session_manager
     app.mount("/mcp", ScopedKnowledgeMCP(app, mcp_asgi))
     return mcp

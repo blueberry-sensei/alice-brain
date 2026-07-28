@@ -1,4 +1,4 @@
-"""API 时间戳必须携带时区，避免浏览器把 UTC 误当成本地时间。"""
+"""API timestamps must carry a time zone, so the browser cannot mistake UTC for local time."""
 
 from datetime import UTC, timedelta
 

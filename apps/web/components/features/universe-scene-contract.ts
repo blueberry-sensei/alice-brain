@@ -181,7 +181,6 @@ export interface UniverseSceneProps {
   actionLabels?: {
     viewDetails: string;
     exploreMore: string;
-    askAi: string;
   };
   onViewDetails?: (node: UniverseSceneNode) => void;
   onExploreMore?: (node: UniverseSceneNode) => void;

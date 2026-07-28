@@ -1,4 +1,4 @@
-"""认证原语：密码哈希（bcrypt）与 JWT 令牌。"""
+"""Authentication primitives: password hashing (bcrypt) and JWT tokens."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import jwt
 from sag_api.core.config import settings
 
 _ALGO = "HS256"
-_BCRYPT_MAX_BYTES = 72  # bcrypt 硬限制
+_BCRYPT_MAX_BYTES = 72  # hard limit of bcrypt
 
 
 def _clip(password: str) -> bytes:
@@ -42,5 +42,5 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
 
 
 def decode_token(token: str) -> dict[str, Any]:
-    """解码并校验 JWT；失败抛 `jwt.PyJWTError`。"""
+    """Decode and verify a JWT; raises `jwt.PyJWTError` on failure."""
     return jwt.decode(token, settings.secret_key, algorithms=[_ALGO])

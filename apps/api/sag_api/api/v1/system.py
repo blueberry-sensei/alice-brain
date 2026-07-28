@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sag_api.core.config import settings
 from sag_api.core.db import SessionLocal, get_session
 from sag_api.core.deps import get_current_user
-from sag_api.core.errors import ApiError, ConflictError
+from sag_api.core.errors import ApiError, ConfigurationError, ConflictError, ValidationError
 from sag_api.core.llm_routing import ChainRunner, recent_attempts
 from sag_api.core.logging import get_logger
 from sag_api.core.model_providers import model_provider_catalog
@@ -18,9 +18,12 @@ from sag_api.mcp.server import MCP_TOOL_DETAILS, MCP_TOOL_NAMES
 from sag_api.schemas.system import (
     LLMProviderEntry,
     ModelConfigUpdate,
+    SubAgentConfigUpdate,
+    SubAgentModelDiscoveryRequest,
     SystemPreferencesUpdate,
 )
 from sag_api.services import settings_service
+from sag_api.services.sub_agent_discovery import discover_sub_agent_models
 
 router = APIRouter(prefix="/system", tags=["system"])
 log = get_logger("system")
@@ -48,25 +51,25 @@ def _capabilities() -> dict:
 
 @router.get("/health")
 async def health() -> dict:
-    """存活探针：进程在跑即 200（不触碰依赖）。"""
+    """Liveness probe: 200 while the process runs (no dependency is touched)."""
     return {"status": "ok"}
 
 
 @router.get("/ready")
 async def ready() -> JSONResponse:
-    """就绪探针：数据库可连通才 200，否则 503（供 compose/K8s 健康检查）。"""
+    """Readiness probe: 200 only when the database is reachable, otherwise 503 (for the compose/K8s health check)."""
     try:
         async with SessionLocal() as session:
             await session.execute(text("SELECT 1"))
     except Exception as e:  # noqa: BLE001
-        log.warning("就绪检查失败：%s", e)
+        log.warning("The readiness check failed: %s", e)
         return JSONResponse(status_code=503, content={"status": "unavailable", "db": False})
     return JSONResponse(content={"status": "ready", "db": True})
 
 
 @router.get("/capabilities")
 async def capabilities() -> dict:
-    """能力探测：供前端判断是否已配置 LLM、当前引擎后端等。"""
+    """Capability probe: lets the frontend tell whether an LLM is configured, which engine backend is in use and so on."""
     return _capabilities()
 
 
@@ -74,7 +77,7 @@ async def capabilities() -> dict:
 async def get_model_config(
     _user: User = Depends(get_current_user),
 ) -> dict:
-    """当前生效的模型与检索配置（密钥脱敏为 *_set 布尔）。"""
+    """The model and retrieval configuration in effect (secrets masked to *_set booleans)."""
     return settings_service.effective_model_config()
 
 
@@ -82,16 +85,17 @@ async def get_model_config(
 async def get_model_providers(
     _user: User = Depends(get_current_user),
 ) -> list[dict[str, object]]:
-    """前后端共享的模型接入能力与技术默认值。"""
+    """The model connectivity capabilities and technical defaults shared by the frontend and backend."""
     return model_provider_catalog()
 
 
 @router.get("/preferences")
 async def get_system_preferences(
     _user: User = Depends(get_current_user),
-) -> dict[str, str]:
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str | bool]:
     """Presentation preferences shared by this local-first installation."""
-    return settings_service.effective_system_preferences()
+    return await settings_service.get_system_preferences(session)
 
 
 @router.put("/preferences")
@@ -99,11 +103,77 @@ async def update_system_preferences(
     body: SystemPreferencesUpdate,
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, str]:
+) -> dict[str, str | bool]:
     return await settings_service.save_system_preferences(
         session,
         body.model_dump(exclude_unset=True),
     )
+
+
+@router.get("/sub-agent-config")
+async def get_sub_agent_config(
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Registry provider/model của sub-agent; credential chỉ trả trạng thái đã đặt."""
+    return await settings_service.get_sub_agent_config(session)
+
+
+@router.put("/sub-agent-config")
+async def update_sub_agent_config(
+    body: SubAgentConfigUpdate,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    discovered: dict[str, set[str]] = {}
+    for entry in body.entries:
+        if entry.provider == "custom":
+            continue
+        # Key mới luôn phải được provider xác nhận trước khi lưu. Slot đang bật cũng luôn
+        # được đối chiếu live để model đã bị gỡ không tiếp tục mang nhãn "đã verify".
+        if not entry.credential and not entry.enabled:
+            continue
+        credential = entry.credential or await settings_service.stored_sub_agent_credential(
+            session,
+            entry.provider,
+        )
+        if not credential:
+            raise ConfigurationError(
+                f"{entry.provider} cần API key để lấy danh sách model",
+                code="sub_agent_credential_required",
+            )
+        models = await discover_sub_agent_models(entry.provider, credential)
+        discovered[entry.provider] = set(models)
+        if entry.model and entry.model not in discovered[entry.provider]:
+            raise ValidationError(
+                f"Model {entry.model!r} không có trong danh sách live của {entry.provider}",
+                code="sub_agent_model_not_available",
+            )
+    return await settings_service.save_sub_agent_config(
+        session,
+        [entry.model_dump() for entry in body.entries],
+        discovered_models=discovered,
+    )
+
+
+@router.post("/sub-agent-config/models")
+async def get_sub_agent_models(
+    body: SubAgentModelDiscoveryRequest,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Xác thực API key rồi lấy danh sách model live; không lưu key được gửi trong request."""
+    credential = body.credential or await settings_service.stored_sub_agent_credential(
+        session,
+        body.provider,
+    )
+    if not credential:
+        raise ConfigurationError(
+            f"{body.provider} cần API key để lấy danh sách model",
+            code="sub_agent_credential_required",
+        )
+    models = await discover_sub_agent_models(body.provider, credential)
+    return {"provider": body.provider, "models": models}
 
 
 @router.get("/model-setup")
@@ -111,7 +181,7 @@ async def get_model_setup_status(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """首次进入时判断是否需要展示快捷模型配置。"""
+    """On first entry, decide whether the quick model configuration should be shown."""
     return await settings_service.model_setup_status(session)
 
 
@@ -121,11 +191,11 @@ async def knowledge_mcp_descriptor(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """返回将整个 SAG 知识库挂入外部 MCP 宿主的连接信息。"""
+    """Return the details for mounting the whole SAG knowledge base in an external MCP host."""
     source_count = await session.scalar(select(func.count(Source.id))) or 0
     base = str(request.base_url).rstrip("/")
     return {
-        "name": "SAG 知识库",
+        "name": "SAG knowledge base",
         "scope": "knowledge_base",
         "source_count": source_count,
         "tools": list(MCP_TOOL_NAMES),
@@ -135,15 +205,15 @@ async def knowledge_mcp_descriptor(
             "url": f"{base}/mcp/",
             "headers": {"Authorization": "Bearer <SAG_TOKEN>"},
             "note": (
-                "默认开放全部信源；Dify 等宿主请使用 streamable_http/Streamable HTTP 传输，"
-                "可在 URL 添加 ?source_id=<id> 临时限定单个信源。"
+                "Every source is exposed by default; hosts such as Dify should use the streamable_http / Streamable HTTP transport, "
+                "and ?source_id=<id> can be added to the URL to narrow it to one source temporarily."
             ),
         },
         "stdio": {
             "command": "python",
             "args": ["-m", "sag_api.mcp.server"],
             "env": {},
-            "note": "默认开放全部信源；设置 SAG_MCP_SOURCE_ID 可限定单个信源。",
+            "note": "Every source is exposed by default; set SAG_MCP_SOURCE_ID to narrow it to one source.",
         },
     }
 
@@ -155,12 +225,12 @@ async def update_model_config(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """保存运行期配置；仅在模型/向量配置实际变化时安全重建引擎。"""
+    """Save the runtime configuration; the engine is only rebuilt when the model/vector configuration really changed."""
     patch = body.model_dump(exclude_unset=True)
     before = settings_service.effective_model_config()
     config = await settings_service.save_model_config(session, patch)
 
-    # 解析器/检索参数保存无需打断暖引擎；只有引擎配置真的变化才安全重建。
+    # Saving the parser or retrieval parameters need not disturb a warm engine; only a real engine configuration change forces a safe rebuild.
     engine_fields = {
         "llm_providers",
         "llm_temperature",

@@ -1,6 +1,6 @@
 /**
- * 复制文本。局域网 HTTP 不属于安全上下文，Clipboard API 可能不可用，
- * 因此保留同步选区复制作为兼容路径。
+ * Copy text. A LAN HTTP page is not a secure context, so the Clipboard API may be unavailable,
+ * which is why the synchronous selection-copy path is kept as a fallback.
  */
 export async function copyText(text: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -8,7 +8,7 @@ export async function copyText(text: string): Promise<void> {
       await navigator.clipboard.writeText(text);
       return;
     } catch {
-      // 浏览器可能因权限或非安全上下文拒绝，继续走兼容路径。
+      // The browser may refuse over permissions or a non-secure context; fall through to the compatibility path.
     }
   }
 
@@ -46,7 +46,7 @@ export async function copyText(text: string): Promise<void> {
     try {
       activeElement?.focus({ preventScroll: true });
     } catch {
-      // 复制已完成时，不让失效的旧焦点覆盖成功结果。
+      // Once the copy has finished, a stale focus must not overwrite the successful result.
     }
   }
 }

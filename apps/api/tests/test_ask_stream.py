@@ -16,7 +16,7 @@ from sag_api.tools.mcp import MCPToolsBundle
 
 
 class AgenticLLM:
-    """一轮工具调用后收尾。"""
+    """Wraps up after one tool round."""
 
     def __init__(self):
         self.calls = 0
@@ -29,17 +29,17 @@ class AgenticLLM:
         self.calls += 1
         if self.calls == 1:
             yield ModelChunk(
-                tool_calls=(ToolCall(id="c1", name="search_context", arguments={"query": "改写"}),),
+                tool_calls=(ToolCall(id="c1", name="search_context", arguments={"query": "rewrite"}),),
                 finish_reason="tool_calls",
             )
             return
-        for token in ["答", "案"]:
+        for token in ["Ans", "wer"]:
             cancellation.raise_if_cancelled()
             yield ModelChunk(text_delta=token)
         yield ModelChunk(finish_reason="stop")
 
     async def complete(self, messages):
-        return "摘要"
+        return "summary"
 
 
 class BrokenProviderLLM(AgenticLLM):
@@ -51,7 +51,7 @@ class BrokenProviderLLM(AgenticLLM):
 
 
 class GreedyLLM(AgenticLLM):
-    """每轮都要求调用工具 → 必然打满 agent_max_steps（复现「卡在第 N 轮」场景）。"""
+    """Every round demands a tool call -> agent_max_steps is always hit (reproduces the \"stuck at round N\" case)."""
 
     def __init__(self):
         super().__init__()
@@ -60,7 +60,7 @@ class GreedyLLM(AgenticLLM):
     async def stream_turn(self, request, cancellation):
         self.calls += 1
         if not request.tools:
-            for token in ["答", "案"]:
+            for token in ["Ans", "wer"]:
                 yield ModelChunk(text_delta=token)
             return
         self.tool_turns += 1
@@ -69,7 +69,7 @@ class GreedyLLM(AgenticLLM):
                 ToolCall(
                     id=f"c{self.tool_turns}",
                     name="search_context",
-                    arguments={"query": f"第{self.tool_turns}轮"},
+                    arguments={"query": f"round {self.tool_turns}"},
                 ),
             ),
             finish_reason="tool_calls",
@@ -89,13 +89,13 @@ class ToolSchemaLLM:
     async def stream_turn(self, request, cancellation):
         self.requests.append(request)
         cancellation.raise_if_cancelled()
-        yield ModelChunk(text_delta="已处理", finish_reason="stop")
+        yield ModelChunk(text_delta="handled", finish_reason="stop")
 
 
 class WebSearchFixtureTool(HostTool):
     meta = ToolMeta(
         name="mcp__web_fixture__search",
-        description="测试用外部网页搜索工具",
+        description="External web search tool used by tests",
         parameters={"type": "object", "properties": {"query": {"type": "string"}}},
     )
 
@@ -115,13 +115,13 @@ async def _setup(c):
 
 
 def test_ask_request_web_switch_defaults_off_and_accepts_legacy_field():
-    assert AskRequest(query="问题").effective_web_enabled is False
-    assert AskRequest(query="问题", web_enabled=True).effective_web_enabled is True
-    assert AskRequest(query="问题", knowledge_only=True).effective_web_enabled is False
-    assert AskRequest(query="问题", knowledge_only=False).effective_web_enabled is True
+    assert AskRequest(query="question").effective_web_enabled is False
+    assert AskRequest(query="question", web_enabled=True).effective_web_enabled is True
+    assert AskRequest(query="question", knowledge_only=True).effective_web_enabled is False
+    assert AskRequest(query="question", knowledge_only=False).effective_web_enabled is True
     # The explicit new field wins when a transitional client happens to send both.
     assert (
-        AskRequest(query="问题", web_enabled=False, knowledge_only=False).effective_web_enabled
+        AskRequest(query="question", web_enabled=False, knowledge_only=False).effective_web_enabled
         is False
     )
 
@@ -160,12 +160,12 @@ async def test_ask_web_switch_isolates_external_tools_and_records_run_mode(monke
                 json={"email": "web-toggle@t.com", "password": "password123"},
             )
             headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
-            source = (await c.post("/api/v1/sources", headers=headers, json={"name": "本地资料"})).json()
+            source = (await c.post("/api/v1/sources", headers=headers, json={"name": "Local material"})).json()
             agent = (
                 await c.post(
                     "/api/v1/agents",
                     headers=headers,
-                    json={"name": "联网开关助手"},
+                    json={"name": "Web toggle assistant"},
                 )
             ).json()
             binding = await c.post(
@@ -179,7 +179,7 @@ async def test_ask_web_switch_isolates_external_tools_and_records_run_mode(monke
             ).json()
             endpoint = f"/api/v1/agents/{agent['id']}/threads/{thread['id']}/ask"
 
-            offline = await c.post(endpoint, headers=headers, json={"query": "介绍这项资料"})
+            offline = await c.post(endpoint, headers=headers, json={"query": "Introduce this material"})
             assert offline.status_code == 200
             offline_request = llm.requests[-1]
             offline_tools = {
@@ -197,10 +197,10 @@ async def test_ask_web_switch_isolates_external_tools_and_records_run_mode(monke
             offline_system = next(
                 message.content for message in offline_request.messages if message.role == "system"
             )
-            assert "本轮联网已关闭" in offline_system
-            assert "不得调用或声称使用网页、MCP 或其他外部搜索" in offline_system
-            assert "联网关闭不代表每轮都要检索" in offline_system
-            assert "不得使用模型自身知识补充" in offline_system
+            assert "Web access is disabled for this turn" in offline_system
+            assert "do not call or claim to use the web, MCP, or external search" in offline_system
+            assert "Retrieval is required only when the answer depends on knowledge facts" in offline_system
+            assert "do not fill gaps from model knowledge" in offline_system
             assert '"web_enabled": false' in offline.text
             assert '"knowledge_only": true' in offline.text
             assert resolved_specs == []
@@ -209,7 +209,7 @@ async def test_ask_web_switch_isolates_external_tools_and_records_run_mode(monke
             online = await c.post(
                 endpoint,
                 headers=headers,
-                json={"query": "介绍这项资料", "web_enabled": True},
+                json={"query": "Introduce this material", "web_enabled": True},
             )
             assert online.status_code == 200
             online_request = llm.requests[-1]
@@ -223,9 +223,9 @@ async def test_ask_web_switch_isolates_external_tools_and_records_run_mode(monke
             online_system = next(
                 message.content for message in online_request.messages if message.role == "system"
             )
-            assert "本轮联网已关闭" not in online_system
+            assert "Web access is disabled for this turn" not in online_system
             assert "open_webpage" in online_system
-            assert "不得把证据不足描述成系统能力不足" in online_system
+            assert "did not verify the claim" in online_system
             assert '"web_enabled": true' in online.text
             assert '"knowledge_only": false' in online.text
             assert resolved_specs == [True]
@@ -244,7 +244,7 @@ async def test_ask_stream_agentic_events_and_trace():
             ask = await c.post(
                 f"/api/v1/agents/{a['id']}/threads/{th['id']}/ask",
                 headers=H,
-                json={"query": "深度测试"},
+                json={"query": "Deep test"},
             )
             body = ask.text
             assert ask.status_code == 200
@@ -263,10 +263,10 @@ async def test_ask_stream_agentic_events_and_trace():
             ).json()["items"]
             asst = [m for m in msgs if m["role"] == "assistant"][-1]
             kinds = [s["kind"] for s in asst["steps"]]
-            assert "tool" in kinds and "thinking" in kinds and "answer" in kinds  # 全程轨迹落库
-            assert asst["steps"][0] == {**asst["steps"][0], "kind": "thinking", "step": 1}  # 无预置检索
+            assert "tool" in kinds and "thinking" in kinds and "answer" in kinds  # the whole trace is persisted
+            assert asst["steps"][0] == {**asst["steps"][0], "kind": "thinking", "step": 1}  # no pre-seeded retrieval
             tool_step = next(step for step in asst["steps"] if step["kind"] == "tool")
-            assert tool_step["arguments"] == {"query": "改写"}
+            assert tool_step["arguments"] == {"query": "rewrite"}
             assert "details" in tool_step
 
 
@@ -283,7 +283,7 @@ async def test_ask_stream_provider_failure_has_terminal_error():
             ask = await c.post(
                 f"/api/v1/agents/{a['id']}/threads/{th['id']}/ask",
                 headers=H,
-                json={"query": "容错"},
+                json={"query": "fault tolerance"},
             )
             body = ask.text
             assert "event: run.failed" in body
@@ -296,7 +296,7 @@ async def test_ask_stream_provider_failure_has_terminal_error():
 
 @pytest.mark.asyncio
 async def test_ask_stream_exhausts_max_steps_then_answers(monkeypatch):
-    """轮次耗尽（模型每轮都要工具）：强制收尾直答且终态必达。"""
+    """Rounds exhausted (the model asks for a tool every round): a forced wrap-up still reaches a terminal state."""
     from sag_api.core.config import settings
     from sag_api.main import app
 
@@ -310,25 +310,25 @@ async def test_ask_stream_exhausts_max_steps_then_answers(monkeypatch):
             ask = await c.post(
                 f"/api/v1/agents/{a['id']}/threads/{th['id']}/ask",
                 headers=H,
-                json={"query": "打满轮次"},
+                json={"query": "exhaust the rounds"},
             )
             body = ask.text
-            assert llm.tool_turns == 2                              # 工具轮恰好打满上限
-            assert llm.calls == 3                                   # 2 工具轮 + 1 强制收尾轮
+            assert llm.tool_turns == 2                              # tool rounds hit the cap exactly
+            assert llm.calls == 3                                   # 2 tool rounds + 1 forced wrap-up round
             assert "event: message.delta" in body and "event: run.completed" in body
             assert '"forced_final": true' in body
             msgs = (
                 await c.get(f"/api/v1/agents/{a['id']}/threads/{th['id']}/messages", headers=H)
             ).json()["items"]
             asst = [m for m in msgs if m["role"] == "assistant"][-1]
-            assert asst["content"] == "答案"
+            assert asst["content"] == "Answer"
             kinds = [s["kind"] for s in asst["steps"]]
-            assert kinds.count("thinking") == 2 and "answer" in kinds  # 轨迹完整：2 轮思考 + 收尾
+            assert kinds.count("thinking") == 2 and "answer" in kinds  # full trace: 2 thinking rounds + wrap-up
 
 
 @pytest.mark.asyncio
 async def test_ask_stream_greeting_skips_tools():
-    """宿主把高置信寒暄设为 none，不把「是否 RAG」交给模型碰运气。"""
+    """The host sets high-confidence small talk to none instead of gambling on the model to decide whether to RAG."""
     from sag_api.main import app
 
     class DirectLLM(AgenticLLM):
@@ -339,7 +339,7 @@ async def test_ask_stream_greeting_skips_tools():
         async def stream_turn(self, request, cancellation):
             self.calls += 1
             self.requests.append(request)
-            yield ModelChunk(text_delta="你好呀", finish_reason="stop")
+            yield ModelChunk(text_delta="Hello there", finish_reason="stop")
 
     transport = httpx.ASGITransport(app=app)
     async with app.router.lifespan_context(app):
@@ -350,10 +350,10 @@ async def test_ask_stream_greeting_skips_tools():
             ask = await c.post(
                 f"/api/v1/agents/{a['id']}/threads/{th['id']}/ask",
                 headers=H,
-                json={"query": "你好"},
+                json={"query": "Hello"},
             )
             body = ask.text
-            assert llm.calls == 1                       # 一轮决策即收
+            assert llm.calls == 1                       # one decision round is enough
             assert llm.requests[0].tool_choice == "none"
             assert any(
                 tool.get("function", {}).get("name") == "search_context"
@@ -365,9 +365,9 @@ async def test_ask_stream_greeting_skips_tools():
                 await c.get(f"/api/v1/agents/{a['id']}/threads/{th['id']}/messages", headers=H)
             ).json()["items"]
             asst = [m for m in msgs if m["role"] == "assistant"][-1]
-            assert asst["content"] == "你好呀"
+            assert asst["content"] == "Hello there"
             kinds = [x["kind"] for x in asst["steps"]]
-            assert kinds == ["answer"]  # 同一个模型 turn 直接产出答案，不再重复计一次 thinking
+            assert kinds == ["answer"]  # the same model turn produces the answer directly, no extra thinking step
 
 
 @pytest.mark.asyncio

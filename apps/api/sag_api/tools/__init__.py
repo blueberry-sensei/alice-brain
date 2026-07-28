@@ -1,4 +1,4 @@
-"""Agent 工具层 —— 可插拔能力单元（检索/实体/未来的 MCP 工具）。"""
+"""Agent tool layer - pluggable capability units (retrieval / entity / future MCP tools)."""
 
 from sag_api.tools.base import Tool, ToolContext, ToolMeta, ToolResult
 from sag_api.tools.registry import ToolRegistry, registry

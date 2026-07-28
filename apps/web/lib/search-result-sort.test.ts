@@ -8,7 +8,7 @@ function event(id: string, startTime: string | null): SearchEvent {
     id,
     document_id: null,
     source_id: "source-1",
-    source_name: "小说",
+    source_name: "Novel",
     title: id,
     summary: "",
     category: "",

@@ -297,7 +297,7 @@ async def search(
         refs,
         event_scores=event_scores,
     )
-    # 对外 source_id = sag 信源 id（可路由 / 取原文），不泄漏引擎内部 id
+    # The public source_id is the sag source id (routable / can fetch the raw text); the engine-internal id is never leaked
     return SearchResponse(
         query=outcome.query,
         sections=[
@@ -327,7 +327,7 @@ async def global_search(
     engine_manager: EngineManager = Depends(get_engine_manager),
     llm: LLMClient = Depends(get_llm),
 ) -> SearchResponse:
-    """全局搜索：先选有界信源分区，再 fan-out 检索并返回可追溯结果。"""
+    """Global search: pick a bounded source partition first, then fan out the search and return traceable results."""
     prepared = await _prepare_global_search(session, engine_manager, body)
     summary = await synthesize_search_answer(
         prepared.outcome.query,
@@ -384,13 +384,13 @@ async def global_search_stream(
             # model stream, not be reported as a failed search.
             raise
         except ApiError as error:
-            log.warning("搜索流异常终止：%s", error.message)
+            log.warning("The search stream ended abnormally: %s", error.message)
             yield _sse("error", {"code": error.code, "message": error.message})
         except Exception as error:  # noqa: BLE001
-            log.exception("搜索流未处理异常：%s", error)
+            log.exception("Unhandled exception in the search stream: %s", error)
             yield _sse(
                 "error",
-                {"code": "stream_error", "message": "搜索生成意外中断"},
+                {"code": "stream_error", "message": "Search generation was interrupted unexpectedly"},
             )
 
     return EventSourceResponse(

@@ -24,27 +24,22 @@ import {
   type ThemePreference,
 } from "@/lib/app-initialization";
 import { DEFAULT_AGENT_AVATAR } from "@/lib/branding";
-import type { ConversationTransport } from "@/lib/conversation-runtime";
-import { DEFAULT_TIME_ZONE } from "@/lib/format";
+import { DEFAULT_TIME_ZONE, detectSystemTimeZone } from "@/lib/format";
 import {
   DEFAULT_SEARCH_STRATEGY,
   isSearchStrategy,
 } from "@/lib/retrieval-config";
 import {
-  SIDEBAR_THREADS_PAGE_SIZE,
   settingsTabHref,
   type SettingsTab,
 } from "@/lib/settings-config";
-import { streamAgentAsk } from "@/lib/sse";
 import type { Agent, Capabilities, Thread, User } from "@/lib/types";
 import {
   type WorkspaceSection,
   workspaceSectionFromPathname,
 } from "@/lib/workspace";
 import {
-  UNIVERSE_ASK_EVENT,
   UNIVERSE_DETAIL_EVENT,
-  dispatchUniverseActivation,
   dispatchUniverseReset,
 } from "@/lib/universe-events";
 import { cn } from "@/lib/utils";
@@ -61,7 +56,6 @@ import {
   type WindowSize,
 } from "@/lib/window-layout";
 import { AppSidebar } from "@/components/features/app-sidebar";
-import { ConversationProvider } from "@/components/features/chat/conversation-provider";
 import {
   DetailPanelMain,
   DetailPanelOutlet,
@@ -104,48 +98,10 @@ function currentViewportSize(): WindowSize {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-const CONVERSATION_TRANSPORT: ConversationTransport = {
-  createThread: ({ agentId, title, signal }) => api.createThread(agentId, title, signal),
-  listMessages: ({ agentId, threadId, cursor, signal }) =>
-    api.listMessages(agentId, threadId, { limit: 40, cursor, signal }),
-  stream: ({
-    agentId,
-    threadId,
-    query,
-    attachmentIds,
-    sourceIds,
-    knowledgeOnly,
-    webEnabled,
-    onEvent,
-    signal,
-  }) =>
-    streamAgentAsk(
-      agentId,
-      threadId,
-      {
-        query,
-        attachments: attachmentIds,
-        source_ids: sourceIds,
-        knowledge_only: knowledgeOnly === true || !webEnabled,
-        web_enabled: webEnabled,
-      },
-      onEvent,
-      signal,
-    ),
-  cancelRun: ({ agentId, threadId, runId }) =>
-    api.cancelAgentRun(agentId, threadId, runId),
-  approveTool: ({ agentId, threadId, runId, toolCallId }) =>
-    api.approveAgentTool(agentId, threadId, runId, toolCallId),
-  rejectTool: ({ agentId, threadId, runId, toolCallId, reason }) =>
-    api.rejectAgentTool(agentId, threadId, runId, toolCallId, reason),
-  deleteMessage: ({ agentId, threadId, messageId }) =>
-    api.deleteMessage(agentId, threadId, messageId),
-};
-
 interface AppCtx {
   user: User | null;
   capabilities: Capabilities | null;
-  /** 默认 agent（客户端主对话入口） */
+  /** The default agent (the client's main conversation entry) */
   agent: Agent | null;
   replaceAgent: (agent: Agent) => void;
   threads: Thread[];
@@ -223,11 +179,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [user, setUser] = React.useState<User | null>(null);
   const [capabilities, setCapabilities] = React.useState<Capabilities | null>(null);
-  const [agent, setAgent] = React.useState<Agent | null>(null);
-  const [threads, setThreads] = React.useState<Thread[]>([]);
-  const [hasMoreThreads, setHasMoreThreads] = React.useState(false);
-  const [threadsExpanded, setThreadsExpanded] = React.useState(false);
-  const [loadingMoreThreads, setLoadingMoreThreads] = React.useState(false);
   const [appMode, setAppMode] = React.useState<AppMode>(
     APP_INITIALIZATION_DEFAULTS.appMode,
   );
@@ -247,9 +198,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [timezone, setTimezone] = React.useState(DEFAULT_TIME_ZONE);
   const sidebarOpenRef = React.useRef(true);
   const restoreSidebarOpenRef = React.useRef<boolean | null>(null);
-  const threadLimitRef = React.useRef(SIDEBAR_THREADS_PAGE_SIZE);
-  const threadRequestIdRef = React.useRef(0);
-  const loadingMoreThreadsRef = React.useRef(false);
   const previousThemeModeRef = React.useRef<AppMode | null>(null);
   const themeBeforeExploreRef = React.useRef<ThemePreference | null>(null);
   const currentThemeRef = React.useRef<ThemePreference>(
@@ -257,7 +205,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
   currentThemeRef.current = resolveThemePreference(theme, resolvedTheme);
 
-  // 首屏恢复模式、工作区，以及 Web 构建允许时的模拟窗口偏好。
+  // Restore the mode, the workspace, and - when the web build allows it - the simulated window preference on first paint.
   React.useEffect(() => {
     const initial = readInitialAppState(window.localStorage);
     setAppMode(initial.mode);
@@ -353,12 +301,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // A node click opens a detail preview inside the current exploration; it
     // must not silently switch the workspace to search/cumulative mode.
     const revealDetail = () => enterExploreMode();
-    const revealAsk = () => enterExploreMode("answer");
     window.addEventListener(UNIVERSE_DETAIL_EVENT, revealDetail);
-    window.addEventListener(UNIVERSE_ASK_EVENT, revealAsk);
     return () => {
       window.removeEventListener(UNIVERSE_DETAIL_EVENT, revealDetail);
-      window.removeEventListener(UNIVERSE_ASK_EVENT, revealAsk);
     };
   }, [enterExploreMode]);
 
@@ -455,55 +400,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const loadThreadLimit = React.useCallback(async (targetAgent: Agent, limit: number) => {
-    const requestId = ++threadRequestIdRef.current;
-    const page = await api.listThreads(targetAgent.id, { limit: limit + 1 });
-    if (requestId !== threadRequestIdRef.current) return;
-
-    const visible = page.slice(0, limit);
-    const expanded = limit > SIDEBAR_THREADS_PAGE_SIZE && visible.length > SIDEBAR_THREADS_PAGE_SIZE;
-
-    setThreads(visible);
-    setHasMoreThreads(page.length > limit);
-    setThreadsExpanded(expanded);
-    if (!expanded) threadLimitRef.current = SIDEBAR_THREADS_PAGE_SIZE;
-  }, []);
-
-  const refreshThreads = React.useCallback(async () => {
-    try {
-      const targetAgent = agent ?? (await api.getDefaultAgent());
-      await loadThreadLimit(targetAgent, threadLimitRef.current);
-    } catch {
-      /* keep the current sidebar list when refresh fails */
-    }
-  }, [agent, loadThreadLimit]);
-
-  const loadMoreThreads = React.useCallback(async () => {
-    if (!agent || loadingMoreThreadsRef.current) return;
-    const previousLimit = threadLimitRef.current;
-    const nextLimit = previousLimit + SIDEBAR_THREADS_PAGE_SIZE;
-    threadLimitRef.current = nextLimit;
-    loadingMoreThreadsRef.current = true;
-    setLoadingMoreThreads(true);
-    try {
-      await loadThreadLimit(agent, nextLimit);
-    } catch (error) {
-      if (threadLimitRef.current === nextLimit) threadLimitRef.current = previousLimit;
-      throw error;
-    } finally {
-      loadingMoreThreadsRef.current = false;
-      setLoadingMoreThreads(false);
-    }
-  }, [agent, loadThreadLimit]);
-
-  const collapseThreads = React.useCallback(() => {
-    threadRequestIdRef.current += 1;
-    threadLimitRef.current = SIDEBAR_THREADS_PAGE_SIZE;
-    setThreads((current) => current.slice(0, SIDEBAR_THREADS_PAGE_SIZE));
-    setThreadsExpanded(false);
-    setHasMoreThreads(true);
-  }, []);
-
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -512,22 +408,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        const [u, c, a, setup] = await Promise.all([
+        const [u, c, setup, preferences] = await Promise.all([
           api.me(),
           api.capabilities(),
-          api.getDefaultAgent(),
           api.modelSetupStatus().catch(() => null),
+          api.getSystemPreferences().catch(() => null),
         ]);
+        let effectiveTimezone = preferences?.timezone_configured
+          ? preferences.timezone
+          : detectSystemTimeZone();
+        if (preferences && !preferences.timezone_configured) {
+          try {
+            const saved = await api.saveSystemPreferences({ timezone: effectiveTimezone });
+            effectiveTimezone = saved.timezone;
+          } catch {
+            // Browser detection remains useful for this session; UTC is its fallback.
+          }
+        }
         if (!alive) return;
         setUser(u);
-        setCapabilities(c);
-        setTimezone(c.timezone || DEFAULT_TIME_ZONE);
-        setAgent(a);
+        setCapabilities({ ...c, timezone: effectiveTimezone });
+        setTimezone(effectiveTimezone);
         setQuickSetupOpen(
           shouldShowQuickModelSetup(Boolean(setup?.required), window.localStorage),
         );
-        threadLimitRef.current = SIDEBAR_THREADS_PAGE_SIZE;
-        loadThreadLimit(a, SIDEBAR_THREADS_PAGE_SIZE).catch(() => {});
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           clearToken();
@@ -540,20 +444,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     })();
     return () => {
       alive = false;
-      threadRequestIdRef.current += 1;
     };
-  }, [loadThreadLimit, router]);
+  }, [router]);
 
-  // 快捷键直接进入探索模式，并打开对应的紧凑工作区。
+  // The shortcut enters exploration mode directly and opens the matching compact workspace.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         enterExploreMode("search");
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        enterExploreMode("answer");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -566,22 +465,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   if (loading) return <FullLoader />;
-  if (!user || !agent) return null;
+  if (!user) return null;
 
   return (
     <AppContext.Provider
       value={{
         user,
         capabilities,
-        agent,
-        replaceAgent: setAgent,
-        threads,
-        hasMoreThreads,
-        threadsExpanded,
-        loadingMoreThreads,
-        refreshThreads,
-        loadMoreThreads,
-        collapseThreads,
+        agent: null,
+        replaceAgent: () => {},
+        threads: [],
+        hasMoreThreads: false,
+        threadsExpanded: false,
+        loadingMoreThreads: false,
+        refreshThreads: async () => {},
+        loadMoreThreads: async () => {},
+        collapseThreads: () => {},
         windowScalingEnabled: WINDOW_SCALING_ENABLED,
         windowMode,
         toggleWindowMode,
@@ -604,12 +503,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }
       >
         <KnowledgeProvider>
-          <ConversationProvider
-            agentId={agent.id}
-            transport={CONVERSATION_TRANSPORT}
-            onActivity={refreshThreads}
-            onUniverseActivation={dispatchUniverseActivation}
-          >
+          <>
             <QuickModelSetupDialog
               open={quickSetupOpen}
               onOpenChange={(nextOpen) => {
@@ -717,14 +611,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </motion.div>
               </div>
             </DetailPanelProvider>
-          </ConversationProvider>
+          </>
         </KnowledgeProvider>
       </SearchProvider>
     </AppContext.Provider>
   );
 }
 
-/** 内容区：官方 Resizable 组合——主区 + 可拖宽详情栏（宽度经 autoSaveId 持久化）。 */
+/** Content area: the official Resizable composition - the main area plus a draggable detail column (its width persisted through autoSaveId). */
 function ContentArea({ children }: { children: React.ReactNode }) {
   const { target, maximized, panelRef } = useDetailPanel();
   const lg = useIsLgUp();

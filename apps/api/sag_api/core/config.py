@@ -1,13 +1,13 @@
-"""应用配置（pydantic-settings）。
+"""Application settings (pydantic-settings).
 
-所有配置项均可通过环境变量 `SAG_*` 或 `.env` 覆盖。设计上区分三类后端：
+Every setting can be overridden by a `SAG_*` environment variable or by `.env`. Three backend groups:
 
-- **sag 元数据库**（用户 / 信源 / 文档 / 会话）：`database_url`
-- **alicecore 存储**（分块 / 向量 / 事件图谱）：`sag_*` + `data_dir`
-- **LLM / embedding**（抽取与答案生成）：`llm_*` / `embedding_*`
+- **sag metadata database** (users / sources / documents / threads): `database_url`
+- **alicecore storage** (chunks / vectors / event graph): `sag_*` + `data_dir`
+- **LLM / embedding** (extraction and answer generation): `llm_*` / `embedding_*`
 - **Parse tài liệu** (PDF / Office -> Markdown, cục bộ): `document_parser`
 
-默认零依赖：SQLite 元数据 + alicecore 本地 LanceDB。生产可整体切到 Postgres。
+Zero dependencies by default: SQLite metadata + alicecore local LanceDB. Production can switch the whole stack to Postgres.
 """
 
 from __future__ import annotations
@@ -35,42 +35,43 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── 应用 ────────────────────────────────────────────────────────────
+    # ── Application ─────────────────────────────────────────────────────
     app_name: str = "sag"
     environment: Literal["dev", "prod"] = "dev"
     debug: bool = True
     secret_key: str = "dev-insecure-secret-change-me-in-production-0123456789"
-    access_token_expire_minutes: int = 60 * 24 * 7  # 7 天
-    # 业务展示时区；数据库与 API 时间戳始终使用 UTC。
-    timezone: str = "Asia/Shanghai"
-    # NoDecode 让逗号分隔值先进入下方 validator，避免 settings 源强制按 JSON 解码。
+    access_token_expire_minutes: int = 60 * 24 * 7  # 7 days
+    # Múi giờ hiển thị; web lưu múi giờ máy người dùng ở lần mở đầu tiên.
+    # Nếu trình duyệt không xác định được thì giữ UTC. DB và API luôn dùng UTC.
+    timezone: str = "UTC"
+    # NoDecode lets comma-separated values reach the validator below, so the settings source does not force JSON decoding.
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
-    # 关闭后仅允许首个用户注册（部署引导），其余返回 403
+    # When off, only the first user may register (deployment bootstrap); everyone else gets 403
     allow_registration: bool = True
 
-    # ── sag 元数据库 ───────────────────────────────────────────────────
+    # ── sag metadata database ──────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./.data/sag.db"
 
-    # ── 存储 ────────────────────────────────────────────────────────────
+    # ── Storage ─────────────────────────────────────────────────────────
     data_dir: str = "./.data/engine"  # alicecore data_dir（LanceDB + SQLite）
     # Log ghi ra file trong thư mục này (ngoài stdout). Trong stack, đây là bind-mount
     # nên xem được từ host mà không cần `docker compose logs`.
     log_dir: str = "./.data/logs"
     log_file_max_mb: int = Field(default=20, ge=1, le=500)
     log_file_backups: int = Field(default=5, ge=0, le=50)
-    upload_dir: str = "./.data/uploads"  # 上传原始文件落盘
-    max_upload_mb: int = 25  # 单文件上传上限
-    job_concurrency: int = 2  # 后台处理并发
-    document_extract_concurrency: int = Field(default=5, ge=1, le=50)  # 单文档 chunk 抽取并发
+    upload_dir: str = "./.data/uploads"  # where uploaded raw files land
+    max_upload_mb: int = 25  # per-file upload limit
+    job_concurrency: int = 2  # background processing concurrency
+    document_extract_concurrency: int = Field(default=5, ge=1, le=50)  # per-document chunk extraction concurrency
     document_chunk_max_tokens: int = Field(default=1_000, ge=100, le=100_000)
     document_chunk_mode: Literal["standard", "heading_strict"] = "standard"
-    # 上传文档已有独立的知识型过滤要求；默认关闭上游基于标题/摘要的严格过滤，
-    # 避免无摘要或标题缺失的书籍正文被误判为噪音。
+    # Uploaded documents already carry their own knowledge-oriented filter; the upstream strict filter on title/summary
+    # is off by default so book bodies without a summary or title are not mistaken for noise.
     document_strict_filtering: bool = False
-    job_max_attempts: int = 3  # 可重试失败的最大尝试次数（含首次）
-    engine_cache_size: int = 16  # 引擎槽 LRU 上限（超限逐出最久未用）
-    engine_warmup_count: int = 4  # 启动时预热最近使用的信源引擎数
-    # 允许上传的扩展名白名单（小写，含点）；空集合表示不限制
+    job_max_attempts: int = 3  # max attempts for a retryable failure (first attempt included)
+    engine_cache_size: int = 16  # engine-slot LRU cap (evicts the least recently used)
+    engine_warmup_count: int = 4  # how many recently used source engines to warm up at startup
+    # Allowed upload extensions (lowercase, dot included); an empty set means no restriction
     allowed_upload_exts: set[str] = {
         ".md",
         ".markdown",
@@ -97,15 +98,15 @@ class Settings(BaseSettings):
     # Mặc định 'en' vì LLM bám JSON schema ổn định hơn; nội dung tiếng Việt vẫn bóc tốt.
     sag_language: Literal["en", "vi"] = "en"
 
-    # 生产单库（pgvector）时复用同一 Postgres —— 由这些字段拼装
+    # A single production database (pgvector) reuses the same Postgres - assembled from these fields
     sag_pg_host: str = "localhost"
     sag_pg_port: int = 5432
     sag_pg_user: str = "sag"
     sag_pg_password: str = "sag"
     sag_pg_database: str = "sag"
 
-    # ── LLM（答案生成 + 抽取）─────────────────────────────────────────
-    # 协议、路由规则和技术默认值统一由 model_providers 注册表维护。
+    # ── LLM (answer generation + extraction) ────────────────────────────
+    # Protocol, routing rules and technical defaults all live in the model_providers registry.
     llm_provider: ModelProviderId = _DEFAULT_LLM_PROVIDER.id
     llm_base_url: str | None = _DEFAULT_LLM_PROVIDER.default_base_url
     llm_api_key: str | None = None
@@ -117,8 +118,8 @@ class Settings(BaseSettings):
     # cắt giữa chừng rồi báo timeout, không phải lỗi provider.
     llm_timeout_ms: int = Field(default=360_000, ge=1_000, le=600_000)
     llm_max_retries: int = Field(default=2, ge=0, le=10)
-    # 透传给 chat/completions 的额外请求体（JSON），如 {"enable_thinking": false}；
-    # 未配置时对 qwen 系模型通过 LiteLLM reasoning_effort=none 统一关闭思考。
+    # Extra request body passed through to chat/completions (JSON), e.g. {"enable_thinking": false};
+    # when unset, qwen-family models get thinking disabled via LiteLLM reasoning_effort=none.
     llm_extra_body: dict | None = None
 
     # ── Chuỗi provider theo thứ tự ưu tiên ─────────────────────────────
@@ -128,7 +129,7 @@ class Settings(BaseSettings):
     # Rỗng = CHƯA cấu hình → ingest/hỏi đáp từ chối chạy (không có key mặc định, không fallback).
     llm_providers: list[dict] = Field(default_factory=list)
 
-    # ── Embedding（OpenAI-compatible；仅 OpenAI provider 可复用生成配置）───────
+    # ── Embedding (OpenAI-compatible; only the OpenAI provider can reuse the generation config) ───
     embedding_model: str = "bge-large-en-v1.5"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
@@ -142,21 +143,21 @@ class Settings(BaseSettings):
     # đã gỡ bỏ — tài liệu của người dùng không rời khỏi máy.
     document_parser: Literal["markitdown"] = "markitdown"
 
-    # ── 检索默认 ────────────────────────────────────────────────────────
+    # ── Retrieval defaults ──────────────────────────────────────────────
     search_strategy: SearchStrategy = "vector"
     search_top_k: int = 8
-    # 全库检索先选有界信源候选；@ 显式范围同样受此硬上限保护。
+    # Whole-library retrieval first picks a bounded set of candidate sources; an explicit @ scope is capped the same way.
     search_source_candidate_limit: int = Field(default=16, ge=1, le=256)
     search_source_concurrency: int = Field(default=4, ge=1, le=32)
-    # 精确模式（multi）含查询侧 LLM 往返；超时/失败/空结果自动回退快速模式（vector）。
+    # Precise mode (multi) includes a query-side LLM round trip; on timeout/failure/empty result it falls back to fast mode (vector).
     search_source_timeout: float = 12.0
     search_fallback_vector: bool = True
 
-    # ── 知识宇宙 ──────────────────────────────────────────────────────────
-    # 服务端统一下发景深门与场景预算，前端不再散落硬编码阈值。
+    # ── Knowledge universe ────────────────────────────────────────────────
+    # The server hands down depth gates and scene budgets, so the frontend no longer scatters hard-coded thresholds.
     universe_manifest_source_limit: int = Field(default=256, ge=16, le=2048)
     universe_timeline_event_page_size: int = Field(default=20, ge=10, le=50)
-    # 时间线只返回事件的一屏事实投影；完整邻域由显式探索分页加载。
+    # The timeline returns only a one-screen factual projection of an event; the full neighbourhood loads through explicit paged exploration.
     universe_event_entity_limit: int = Field(default=8, ge=4, le=8)
     universe_lod_orbit_px: int = Field(default=72, ge=24, le=240)
     universe_lod_near_px: int = Field(default=180, ge=64, le=640)
@@ -173,16 +174,16 @@ class Settings(BaseSettings):
     universe_planet_radius_max: float = Field(default=132.0, ge=48.0, le=360.0)
     universe_planet_radius_scale: float = Field(default=22.0, ge=2.0, le=80.0)
 
-    # ── Agent 循环 ──────────────────────────────────────────────────────
-    agent_max_steps: int = 6  # 工具调用最大轮数（多轮检索的上界）
-    history_keep_recent: int = 8  # 历史压缩时原文保留的最近消息数
-    # 只装载最近有界窗口；更旧对话应进入滚动摘要，不做全表回放。
+    # ── Agent loop ──────────────────────────────────────────────────────
+    agent_max_steps: int = 6  # max tool-call rounds (upper bound on multi-round retrieval)
+    history_keep_recent: int = 8  # how many recent messages stay verbatim when history is compacted
+    # Load only a bounded recent window; older conversation belongs in the rolling summary, not a full replay.
     history_load_limit: int = Field(default=200, ge=1, le=1000)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
-        """允许用逗号分隔的字符串配置 CORS 源。"""
+        """Allow the CORS origins to be configured as a comma-separated string."""
         if isinstance(v, str):
             v = v.strip()
             if not v:
@@ -195,7 +196,7 @@ class Settings(BaseSettings):
     @field_validator("search_strategy", mode="before")
     @classmethod
     def _normalize_legacy_search_strategy(cls, value: object) -> object:
-        # 兼容升级前的环境变量；公开 API 已不再接受 atomic。
+        # Backwards compatible with the pre-upgrade environment variable; the public API no longer accepts atomic.
         return normalize_search_strategy(value) if isinstance(value, str) else value
 
     @field_validator("timezone")
@@ -205,7 +206,7 @@ class Settings(BaseSettings):
         try:
             ZoneInfo(normalized)
         except (ZoneInfoNotFoundError, ValueError) as error:
-            raise ValueError("timezone 必须是有效的 IANA 时区") from error
+            raise ValueError("timezone must be a valid IANA time zone") from error
         return normalized
 
     @property
@@ -220,17 +221,17 @@ class Settings(BaseSettings):
 
     @property
     def llm_configured(self) -> bool:
-        """LLM 是否已配置（决定抽取 / 问答能否真正运行）。"""
+        """Whether the LLM is configured (decides if extraction / Q&A can actually run)."""
         return bool(self.llm_chain)
 
     @property
     def routed_llm_model(self) -> str:
-        """统一调用链使用的 LiteLLM 路由名。"""
+        """LiteLLM route name used by the whole call chain."""
         return get_model_provider(self.llm_provider).route_model(self.llm_model)
 
     @property
     def effective_llm_temperature(self) -> float:
-        """应用当前 provider 的采样能力约束。"""
+        """Sampling capability constraints of the current provider."""
         return get_model_provider(self.llm_provider).resolve_temperature(self.llm_temperature)
 
     @property

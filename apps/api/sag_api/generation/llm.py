@@ -229,14 +229,14 @@ class LLMClient:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.warning("LLM 轮次流式调用失败：%s", e)
-            raise UpstreamError(f"生成失败：{e}") from e
+            log.warning("Streaming LLM round failed: %s", e)
+            raise UpstreamError(f"Generation failed: {e}") from e
         finally:
             if stream is not None:
                 try:
                     await self._close_stream(stream)
                 except Exception as e:  # noqa: BLE001
-                    log.debug("LLM 轮次流关闭失败：%s", e)
+                    log.debug("Failed to close the LLM round stream: %s", e)
 
     async def complete(
         self, messages: list[Message], *, response_format: dict | None = None
@@ -252,10 +252,10 @@ class LLMClient:
             resp = await self._create_completion(messages, response_format=response_format)
             choices = _attr(resp, "choices", []) or []
             if not choices:
-                raise UpstreamError("模型未返回候选答案")
+                raise UpstreamError("The model returned no candidate answer")
             return _attr(_attr(choices[0], "message", {}), "content", "") or ""
         except Exception as e:  # noqa: BLE001
-            raise UpstreamError(f"生成失败：{e}") from e
+            raise UpstreamError(f"Generation failed: {e}") from e
 
     async def stream_complete(self, messages: list[Message]) -> AsyncIterator[str]:
         """Stream plain text completion deltas without the Agent/tool protocol."""
@@ -274,7 +274,7 @@ class LLMClient:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            raise UpstreamError(f"生成失败：{e}") from e
+            raise UpstreamError(f"Generation failed: {e}") from e
         finally:
             # Closing explicitly makes browser aborts release the upstream HTTP
             # connection immediately, even when the stream is only partly read.
@@ -282,4 +282,4 @@ class LLMClient:
                 try:
                     await self._close_stream(stream)
                 except Exception as e:  # noqa: BLE001
-                    log.debug("LLM 流关闭失败：%s", e)
+                    log.debug("Failed to close the LLM stream: %s", e)

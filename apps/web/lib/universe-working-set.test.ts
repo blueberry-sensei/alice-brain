@@ -24,13 +24,13 @@ function activation(epoch: number, prefix: string, count = 4): UniverseActivatio
     id: `${prefix}-event-${index}`,
     kind: "event" as const,
     source_id: "source-a",
-    label: `事件 ${index}`,
+    label: `Event ${index}`,
   }));
   const entities = Array.from({ length: count }, (_, index) => ({
     id: `${prefix}-entity-${index}`,
     kind: "entity" as const,
     source_id: "source-a",
-    label: `实体 ${index}`,
+    label: `Entity ${index}`,
   }));
   return {
     epoch,
@@ -219,10 +219,10 @@ describe("universe working set", () => {
     const first = replaceUniverseWorkingSet({
       epoch: 9,
       origin: "assistant",
-      query: "第一轮",
+      query: "round one",
       nodes: [
-        { id: "event-a", kind: "event", source_id: "source-a", label: "事件 A" },
-        { id: "shared", kind: "entity", source_id: "source-a", label: "共享线索" },
+        { id: "event-a", kind: "event", source_id: "source-a", label: "Event A" },
+        { id: "shared", kind: "entity", source_id: "source-a", label: "Shared clue" },
       ],
       relations: [{
         source_id: "source-a",
@@ -236,10 +236,10 @@ describe("universe working set", () => {
     const accumulated = mergeUniverseWorkingSetActivation(first, {
       epoch: 12,
       origin: "assistant",
-      query: "第二轮",
+      query: "round two",
       nodes: [
-        { id: "event-b", kind: "event", source_id: "source-a", label: "事件 B" },
-        { id: "shared", kind: "entity", source_id: "source-a", label: "共享线索（更新）" },
+        { id: "event-b", kind: "event", source_id: "source-a", label: "Event B" },
+        { id: "shared", kind: "entity", source_id: "source-a", label: "Shared clue (updated)" },
       ],
       relations: [{
         source_id: "source-a",
@@ -254,7 +254,7 @@ describe("universe working set", () => {
     expect(accumulated.epoch).toBe(9);
     expect(accumulated.nodes.filter((node) => node.id === "shared")).toHaveLength(1);
     expect(accumulated.nodes.find((node) => node.id === "shared")?.label)
-      .toBe("共享线索（更新）");
+      .toBe("Shared clue (updated)");
     expect(accumulated.nodes.filter((node) => node.kind === "event").map((node) => node.id))
       .toEqual(["event-a", "event-b"]);
     expect(accumulated.relations).toHaveLength(2);
@@ -266,10 +266,10 @@ describe("universe working set", () => {
     const firstAnswer = replaceUniverseWorkingSet({
       epoch: 21,
       origin: "assistant",
-      query: "第一轮",
+      query: "round one",
       nodes: [
-        { id: "event-a", kind: "event", source_id: "source-a", label: "事件 A" },
-        { id: "entity-a", kind: "entity", source_id: "source-a", label: "实体 A" },
+        { id: "event-a", kind: "event", source_id: "source-a", label: "Event A" },
+        { id: "entity-a", kind: "entity", source_id: "source-a", label: "Entity A" },
       ],
       relations: [{
         source_id: "source-a",
@@ -286,8 +286,8 @@ describe("universe working set", () => {
       origin: "expansion",
       anchor_key: universeNodeKey("event", "event-a", "source-a"),
       nodes: [
-        { id: "event-expanded", kind: "event", source_id: "source-a", label: "扩展事件" },
-        { id: "entity-a", kind: "entity", source_id: "source-a", label: "实体 A" },
+        { id: "event-expanded", kind: "event", source_id: "source-a", label: "Expanded event" },
+        { id: "entity-a", kind: "entity", source_id: "source-a", label: "Entity A" },
       ],
       relations: [{
         source_id: "source-a",
@@ -301,10 +301,10 @@ describe("universe working set", () => {
     const nextAnswer = mergeUniverseWorkingSetActivation(explored, {
       epoch: 24,
       origin: "assistant",
-      query: "第二轮",
+      query: "round two",
       nodes: [
-        { id: "event-b", kind: "event", source_id: "source-a", label: "事件 B" },
-        { id: "entity-a", kind: "entity", source_id: "source-a", label: "实体 A" },
+        { id: "event-b", kind: "event", source_id: "source-a", label: "Event B" },
+        { id: "entity-a", kind: "entity", source_id: "source-a", label: "Entity A" },
       ],
       relations: [{
         source_id: "source-a",

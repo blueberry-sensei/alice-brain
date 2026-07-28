@@ -1,8 +1,8 @@
-"""MCP 三件事，全程离线：
+"""Three MCP concerns, fully offline:
 
-1. 信源即 MCP —— 经进程内内存客户端列出并调用 search/get_entity/get_chunk（空库 → 结构化结果）。
-2. 远端 MCP 工具适配成 sag 的 `Tool`（命名空间前缀 + call_tool 往返）。
-3. 绑定与描述端点 —— agent 挂载外部 MCP 的校验、信源的 MCP 连接描述。
+1. A source is an MCP endpoint - list and call search/get_entity/get_chunk through the in-process memory client (an empty database -> a structured result).
+2. A remote MCP tool adapted into a sag `Tool` (a namespace prefix + a call_tool round trip).
+3. The binding and description endpoints - validating an agent mounting an external MCP, and a source's MCP connection details.
 """
 
 from contextlib import asynccontextmanager
@@ -34,7 +34,7 @@ async def _register(c, email):
 
 @pytest.mark.asyncio
 async def test_source_mcp_lists_and_calls_tools_over_engine():
-    """知识库 MCP server：真实引擎 + 全库作用域，探索与检索工具均可调用。"""
+    """The knowledge-base MCP server: a real engine with whole-library scope, where the exploration and search tools all work."""
     from sqlalchemy import select
 
     from sag_api.core.db import SessionLocal
@@ -45,8 +45,8 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             A = await _register(c, "mcpsrv@t.com")
-            src = (await c.post("/api/v1/sources", headers=A, json={"name": "MCP 源"})).json()
-            src2 = (await c.post("/api/v1/sources", headers=A, json={"name": "第二个 MCP 源"})).json()
+            src = (await c.post("/api/v1/sources", headers=A, json={"name": "MCP \u6e90"})).json()
+            src2 = (await c.post("/api/v1/sources", headers=A, json={"name": "\u7b2c\u4e8c\u4e2a MCP \u6e90"})).json()
             async with SessionLocal() as s:
                 sources = tuple(
                     (
@@ -61,7 +61,7 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                 )
 
             mcp = build_source_mcp()
-            # 作用域须在 connect（起服务任务）之前设置，任务会复制含作用域的上下文
+            # The scope must be set before connect (which starts the service task), because the task copies the context carrying the scope
             with use_scope(app.state.engine_manager, sources):
                 async with connect(mcp) as client:
                     await client.initialize()
@@ -90,10 +90,10 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                     assert search_properties["source_id"]["description"]
 
                     r_sources = await client.call_tool("list_sources", {})
-                    assert "MCP 源" in r_sources.content[0].text
-                    assert "第二个 MCP 源" in r_sources.content[0].text
+                    assert "MCP \u6e90" in r_sources.content[0].text
+                    assert "\u7b2c\u4e8c\u4e2a MCP \u6e90" in r_sources.content[0].text
 
-                    # 探索原语（离线）：先上传一个 md
+                    # Exploration primitives (offline): upload one md first
                     up = await c.post(
                         f"/api/v1/sources/{src['id']}/documents",
                         headers=A,
@@ -105,32 +105,32 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                     r_read = await client.call_tool("read", {"document_id": doc["id"]})
                     assert "hello mcp world" in r_read.content[0].text
                     r_out = await client.call_tool("outline", {"document_id": doc["id"]})
-                    assert isinstance(r_out.content[0].text, str)  # 处理中→占位文案亦可
-                    r_grep = await client.call_tool("grep", {"pattern": "不存在的串xyz", "source_id": src["id"]})
-                    assert "未匹配" in r_grep.content[0].text or "chunk_id" in r_grep.content[0].text
+                    assert isinstance(r_out.content[0].text, str)  # still processing -> a placeholder string is fine too
+                    r_grep = await client.call_tool("grep", {"pattern": "\u4e0d\u5b58\u5728\u7684\u4e32xyz", "source_id": src["id"]})
+                    assert "nothing matched" in r_grep.content[0].text or "chunk_id" in r_grep.content[0].text
 
                     r_chunk = await client.call_tool(
                         "get_chunk", {"chunk_id": "does-not-exist", "source_id": src["id"]}
                     )
                     assert not r_chunk.isError
-                    assert "未找到" in r_chunk.content[0].text
+                    assert "not found" in r_chunk.content[0].text
 
-                    r_entity = await client.call_tool("get_entity", {"name": "查无此实体", "source_id": src["id"]})
+                    r_entity = await client.call_tool("get_entity", {"name": "\u67e5\u65e0\u6b64\u5b9e\u4f53", "source_id": src["id"]})
                     assert not r_entity.isError
-                    assert "未找到" in r_entity.content[0].text
+                    assert "not found" in r_entity.content[0].text
 
-                    # 检索走真实引擎（离线下 SAG 需 LLM 抽取实体 → 结构化报错）；
-                    # 关键是工具正确派发并返回结构化 MCP 响应，不使 server 崩溃
-                    r_search = await client.call_tool("search", {"query": "任意问题", "source_id": src["id"]})
+                    # Search goes through the real engine (offline, SAG needs an LLM to extract entities -> a structured error);
+                    # what matters is that the tool dispatches correctly and returns a structured MCP response without crashing the server
+                    r_search = await client.call_tool("search", {"query": "\u4efb\u610f\u95ee\u9898", "source_id": src["id"]})
                     assert r_search.content and isinstance(r_search.content[0].text, str)
 
 
 @pytest.mark.asyncio
 async def test_remote_mcp_tool_adapted_as_sag_tool():
-    """远端 MCP 工具 → MCPTool：命名空间前缀 + invoke 往返回文本。"""
+    """A remote MCP tool -> MCPTool: a namespace prefix and an invoke round trip returning text."""
     stub = FastMCP("stub")
 
-    @stub.tool(description="回显输入")
+    @stub.tool(description="echo the input")
     async def echo(text: str) -> str:
         return f"echo:{text}"
 
@@ -181,7 +181,7 @@ def test_external_reference_url_validation_rejects_unsafe_authority_and_whitespa
 
 @pytest.mark.asyncio
 async def test_remote_mcp_error_result_raises_structured_exception():
-    """MCP isError 必须进入运行时失败分支，不能伪装成成功的文本结果。"""
+    """An MCP isError must take the runtime failure branch and must not pose as a successful text result."""
     tool = _adapt_stub_result(
         SimpleNamespace(
             isError=True,
@@ -202,7 +202,7 @@ async def test_remote_mcp_error_result_raises_structured_exception():
 
 @pytest.mark.asyncio
 async def test_remote_mcp_extracts_and_deduplicates_external_references():
-    """structured content、文本 JSON 与普通 URL 都能形成可渲染外部来源。"""
+    """Structured content, text JSON and a plain URL can all form a renderable external source."""
     tool = _adapt_stub_result(
         SimpleNamespace(
             isError=False,
@@ -233,7 +233,7 @@ async def test_remote_mcp_extracts_and_deduplicates_external_references():
                         '"site":"Third","summary":"Gamma release notes."}]}'
                     )
                 ),
-                SimpleNamespace(text="重复来源 https://news.example/a；忽略 ftp://files.example/x"),
+                SimpleNamespace(text="\u91cd\u590d\u6765\u6e90 https://news.example/a\uff1b\u5ffd\u7565 ftp://files.example/x"),
             ],
         )
     )
@@ -264,7 +264,7 @@ async def test_remote_mcp_extracts_and_deduplicates_external_references():
 
 @pytest.mark.asyncio
 async def test_remote_mcp_reference_snippets_are_bounded_and_merge_richer_duplicates():
-    """重复 URL 补全后续元数据；摘要有边界且不会展开 JSON 工具载荷。"""
+    """A duplicate URL backfills the later metadata; the summary is bounded and never expands a JSON tool payload."""
     long_summary = "  ".join(["detail"] * 100)
     serialized_payload = (
         '{"results":[{"url":"https://nested.example/private",'
@@ -327,7 +327,7 @@ async def test_remote_mcp_reference_snippets_are_bounded_and_merge_richer_duplic
 
 @pytest.mark.asyncio
 async def test_open_agent_mcp_tools_returns_safe_connection_warning(monkeypatch):
-    """连接失败会反馈给调用方，但 warning 不泄露配置、凭据或完整异常。"""
+    """A connection failure is reported to the caller, but the warning leaks no configuration, credential or full exception."""
 
     @asynccontextmanager
     async def broken_session(config):
@@ -345,7 +345,7 @@ async def test_open_agent_mcp_tools_returns_safe_connection_warning(monkeypatch)
             {
                 "code": "mcp_connection_failed",
                 "server": "private_search",
-                "message": "MCP 服务连接失败，本轮已跳过该服务。",
+                "message": "Could not connect to the MCP service; it was skipped this turn.",
             }
         ]
         warning_text = str(bundle.warnings)
@@ -354,7 +354,7 @@ async def test_open_agent_mcp_tools_returns_safe_connection_warning(monkeypatch)
 
 
 def test_registry_overlay_does_not_pollute_global():
-    """叠加层含内置 + MCP 工具；全局单例不被污染。"""
+    """The overlay holds the built-in and the MCP tools; the global singleton stays clean."""
 
     class _Stub(Tool):
         meta = ToolMeta(
@@ -368,13 +368,13 @@ def test_registry_overlay_does_not_pollute_global():
 
     child = registry.overlay([_Stub()])
     assert child.has("mcp__ext__ping")
-    assert child.has("search_context")  # 内置工具继承
-    assert not registry.has("mcp__ext__ping")  # 全局不受影响
+    assert child.has("search_context")  # the built-in tools are inherited
+    assert not registry.has("mcp__ext__ping")  # the global registry is untouched
 
 
 @pytest.mark.asyncio
 async def test_mcp_binding_validation_and_source_descriptor():
-    """agent 挂载外部 MCP 的校验 + 信源 MCP 连接描述端点。"""
+    """Validating an agent mounting an external MCP, plus the source MCP connection description endpoint."""
     from sag_api.main import create_app
 
     app = create_app()
@@ -382,7 +382,7 @@ async def test_mcp_binding_validation_and_source_descriptor():
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             A = await _register(c, "mcpbind@t.com")
-            src = (await c.post("/api/v1/sources", headers=A, json={"name": "描述源"})).json()
+            src = (await c.post("/api/v1/sources", headers=A, json={"name": "\u63cf\u8ff0\u6e90"})).json()
 
             desc = await c.get(f"/api/v1/sources/{src['id']}/mcp", headers=A)
             assert desc.status_code == 200, desc.text
@@ -426,7 +426,7 @@ async def test_mcp_binding_validation_and_source_descriptor():
             )
             assert initialized.status_code == 200, initialized.text
 
-            agent = (await c.post("/api/v1/agents", headers=A, json={"name": "挂载助手"})).json()
+            agent = (await c.post("/api/v1/agents", headers=A, json={"name": "\u6302\u8f7d\u52a9\u624b"})).json()
             ok = await c.post(
                 f"/api/v1/agents/{agent['id']}/bindings",
                 headers=A,
@@ -439,6 +439,6 @@ async def test_mcp_binding_validation_and_source_descriptor():
             bad = await c.post(
                 f"/api/v1/agents/{agent['id']}/bindings",
                 headers=A,
-                json={"target_type": "mcp_server", "config": {"name": "缺少连接"}},
+                json={"target_type": "mcp_server", "config": {"name": "\u7f3a\u5c11\u8fde\u63a5"}},
             )
             assert bad.status_code == 422, bad.text

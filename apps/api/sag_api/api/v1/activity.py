@@ -1,4 +1,4 @@
-"""近期动态 —— 知识库时间线：最近文档（会话不属于知识库动态）。"""
+"""Recent activity - the knowledge-base timeline: most recent documents (threads are not knowledge-base activity)."""
 
 from __future__ import annotations
 

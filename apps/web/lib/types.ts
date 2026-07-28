@@ -262,6 +262,55 @@ export interface ModelSetupStatus {
 
 export interface SystemPreferences {
   timezone: string;
+  timezone_configured: boolean;
+}
+
+export interface SystemPreferencesUpdate {
+  timezone: string;
+}
+
+export type SubAgentProviderId =
+  | "claude"
+  | "codex"
+  | "opencode-go"
+  | "opencode-zen"
+  | "gemini-cli"
+  | "custom";
+
+export interface SubAgentProviderSpec {
+  id: SubAgentProviderId;
+  display_name: string;
+  credential_label: string;
+  credential_placeholder: string;
+  model_discovery: boolean;
+  custom_model: boolean;
+  base_url_configurable: boolean;
+}
+
+export interface SubAgentEntry {
+  provider: SubAgentProviderId;
+  model: string;
+  provider_name: string;
+  base_url: string | null;
+  enabled: boolean;
+  credential_set: boolean;
+  model_verified?: boolean;
+  error?: "credential_undecryptable";
+}
+
+export type SubAgentEntryInput = Omit<SubAgentEntry, "credential_set" | "error"> & {
+  credential?: string;
+  credential_set_hint?: boolean;
+};
+
+export interface SubAgentConfig {
+  providers: SubAgentProviderSpec[];
+  entries: SubAgentEntry[];
+}
+
+export interface SubAgentModels {
+  provider: Exclude<SubAgentProviderId, "custom">;
+  models: string[];
 }
 
 export interface McpToolDetail {

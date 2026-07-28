@@ -1,9 +1,9 @@
-"""sag 的 MCP 层 —— 信源即 MCP 端点，agent 作为 MCP 客户端挂载。
+"""MCP layer of sag - a source is an MCP endpoint, and the agent mounts as an MCP client.
 
-- `server`：把一个信源的检索/实体/原文能力包成 MCP server（供外部 Claude Desktop /
-  Cursor 挂载，也供进程内 agent 复用暖引擎）。
-- `mount`：把 Streamable-HTTP 端点挂进 FastAPI（`/mcp?source_id=…`）。
-- 客户端适配在 `sag_api.tools.mcp`：把远端 MCP 工具适配成统一的 `Tool` 接口。
+- `server`: wraps one source's retrieval / entity / raw-text capabilities as an MCP server (for an
+  external Claude Desktop / Cursor to mount, and for the in-process agent to reuse a warm engine).
+- `mount`: mounts the Streamable-HTTP endpoint into FastAPI (`/mcp?source_id=...`).
+- The client adapter lives in `sag_api.tools.mcp`: it adapts remote MCP tools to the unified `Tool` interface.
 """
 
 from sag_api.mcp.server import MCPScope, build_source_mcp, use_scope

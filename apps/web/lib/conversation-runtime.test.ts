@@ -41,7 +41,7 @@ function message(id: string, content: string, promptPreview?: string): Message {
 function messageRange(from: number, to: number): Message[] {
   return Array.from({ length: to - from + 1 }, (_, index) => {
     const value = from + index;
-    return message(`message-${value}`, `消息 ${value}`);
+    return message(`message-${value}`, `message ${value}`);
   });
 }
 
@@ -51,7 +51,7 @@ function persistedAnswer(): MessagePage {
       id: "server-user",
       thread_id: "thread-1",
       role: "user",
-      content: "现在几点",
+      content: "what time is it",
       citations: [],
       attachments: [],
       steps: [],
@@ -61,7 +61,7 @@ function persistedAnswer(): MessagePage {
       id: "server-assistant",
       thread_id: "thread-1",
       role: "assistant",
-      content: "现在是八点",
+      content: "it is eight o'clock",
       citations: [],
       attachments: [],
       steps: [{ kind: "answer", step: 1, ms: 200 }],
@@ -177,7 +177,7 @@ describe("conversation runtime", () => {
   it("keeps stable session/thread identity and loads MessagePage history", async () => {
     const transport = new FakeTransport();
     transport.historyPages.push(
-      page([message("message-1", "历史回答", "【系统指令】\n规则\n\n【当前问题】\n问题")]),
+      page([message("message-1", "historical answer", "[System instructions]\nrules\n\n[Current question]\nquestion")]),
     );
     const conversations = runtime(transport);
     const sessionId = conversations.forThread("thread-1", { activate: true });
@@ -192,9 +192,9 @@ describe("conversation runtime", () => {
       messages: [
         {
           id: "message-1",
-          content: "历史回答",
+          content: "historical answer",
           delivery: "persisted",
-          promptPreview: "【系统指令】\n规则\n\n【当前问题】\n问题",
+          promptPreview: "[System instructions]\nrules\n\n[Current question]\nquestion",
         },
       ],
     });
@@ -202,13 +202,13 @@ describe("conversation runtime", () => {
 
   it("normalizes persisted external citations without treating them as knowledge chunks", async () => {
     const transport = new FakeTransport();
-    const persisted = message("message-1", "带外部来源的历史回答");
+    const persisted = message("message-1", "a historical answer with an external source");
     persisted.citations = [
       {
         n: 1,
         kind: "external",
         url: "https://news.example.com/story",
-        title: "外部报道",
+        title: "External coverage",
         source: "Example News",
         mapped: false,
         claim_level: "run",
@@ -225,13 +225,13 @@ describe("conversation runtime", () => {
         n: 1,
         kind: "external",
         chunk_id: null,
-        heading: "外部报道",
+        heading: "External coverage",
         snippet: "",
         score: 0,
         source_id: null,
         source_name: "Example News",
         url: "https://news.example.com/story",
-        title: "外部报道",
+        title: "External coverage",
         source: "Example News",
         mapped: false,
         claim_level: "run",
@@ -243,12 +243,12 @@ describe("conversation runtime", () => {
     const transport = new FakeTransport();
     transport.historyPages.push(
       {
-        items: [message("message-2", "第二条"), message("message-3", "第三条")],
+        items: [message("message-2", "the second"), message("message-3", "the third")],
         has_more: true,
         next_cursor: "older-1",
       },
       {
-        items: [message("message-1", "第一条"), message("message-2", "重复第二条")],
+        items: [message("message-1", "the first"), message("message-2", "the second again")],
         has_more: false,
         next_cursor: null,
       },
@@ -330,13 +330,13 @@ describe("conversation runtime", () => {
     const sessionId = conversations.forThread("thread-1", { activate: true });
     await conversations.ensureHistory(sessionId);
 
-    const running = conversations.send(sessionId, { query: "当前问题" });
+    const running = conversations.send(sessionId, { query: "current question" });
     await conversations.ensureHistory(sessionId, { force: true });
 
     const active = conversations.getSessionSnapshot(sessionId);
     expect(active.messages).toHaveLength(40);
     expect(active.messages.filter((item) => item.delivery === "pending")).toMatchObject([
-      { role: "user", content: "当前问题" },
+      { role: "user", content: "current question" },
     ]);
     expect(active.messages.filter((item) => item.delivery === "streaming")).toMatchObject([
       { role: "assistant" },
@@ -354,7 +354,7 @@ describe("conversation runtime", () => {
     await running;
     const finished = conversations.getSessionSnapshot(sessionId);
     expect(finished.messages).toHaveLength(40);
-    expect(finished.messages.some((item) => item.role === "user" && item.content === "当前问题")).toBe(true);
+    expect(finished.messages.some((item) => item.role === "user" && item.content === "current question")).toBe(true);
     expect(finished.messages.at(-1)).toMatchObject({
       role: "assistant",
       delivery: "cancelled",
@@ -388,23 +388,23 @@ describe("conversation runtime", () => {
     const listener = vi.fn();
     const unsubscribe = conversations.subscribeSession(first, listener);
 
-    const running = conversations.send(first, { query: "现在几点" });
+    const running = conversations.send(first, { query: "what time is it" });
     expect(conversations.getIndexSnapshot().activeRunSessionId).toBe(first);
-    await expect(conversations.send(second, { query: "另一个问题" })).rejects.toBeInstanceOf(
+    await expect(conversations.send(second, { query: "another question" })).rejects.toBeInstanceOf(
       ConversationBusyError,
     );
 
     unsubscribe();
     transport.emit(event("run.started", 0, { user_message_id: "server-user" }));
     transport.emit(event("turn.started", 1));
-    transport.emit(event("message.delta", 2, { role: "assistant", delta: "现在" }));
-    transport.emit(event("message.delta", 3, { role: "assistant", delta: "是八点" }));
+    transport.emit(event("message.delta", 2, { role: "assistant", delta: "it is " }));
+    transport.emit(event("message.delta", 3, { role: "assistant", delta: "eight o'clock" }));
     expect(conversations.getSessionSnapshot(first).messages.at(-1)?.content).toBe("");
 
     await vi.advanceTimersByTimeAsync(49);
     expect(conversations.getSessionSnapshot(first).messages.at(-1)?.content).toBe("");
     await vi.advanceTimersByTimeAsync(1);
-    expect(conversations.getSessionSnapshot(first).messages.at(-1)?.content).toBe("现在是八点");
+    expect(conversations.getSessionSnapshot(first).messages.at(-1)?.content).toBe("it is eight o'clock");
 
     transport.emit(
       event("message.completed", 4, {
@@ -414,7 +414,7 @@ describe("conversation runtime", () => {
       }),
     );
     transport.emit(
-      event("run.completed", 5, { citations: [], prompt_preview: "统一提示预览" }),
+      event("run.completed", 5, { citations: [], prompt_preview: "unified prompt preview" }),
     );
     transport.historyPages.push(persistedAnswer());
     transport.streamResult.resolve({
@@ -426,10 +426,10 @@ describe("conversation runtime", () => {
 
     expect(conversations.getSessionSnapshot(first).run).toBeNull();
     expect(conversations.getSessionSnapshot(first).messages.at(-1)).toMatchObject({
-      content: "现在是八点",
+      content: "it is eight o'clock",
       delivery: "persisted",
       steps: [{ kind: "answer", ms: 200 }],
-      promptPreview: "统一提示预览",
+      promptPreview: "unified prompt preview",
     });
     expect(conversations.getSessionSnapshot(first).messages).toHaveLength(2);
     expect(transport.streamSignal?.aborted).toBe(false);
@@ -441,7 +441,7 @@ describe("conversation runtime", () => {
     const sessionId = conversations.forThread("thread-1", { activate: true });
 
     const first = conversations.send(sessionId, {
-      query: "查询最新动态",
+      query: "look up the latest news",
       webEnabled: true,
     });
     expect(transport.streamCalls).toEqual([{ webEnabled: true, knowledgeOnly: undefined }]);
@@ -449,7 +449,7 @@ describe("conversation runtime", () => {
     transport.streamResult.resolve({ status: "completed", runId: "run-1" });
     await first;
 
-    await conversations.send(sessionId, { query: "只根据知识库回答" });
+    await conversations.send(sessionId, { query: "answer only from the knowledge base" });
     expect(transport.streamCalls).toEqual([
       { webEnabled: true, knowledgeOnly: undefined },
       { webEnabled: false, knowledgeOnly: undefined },
@@ -461,37 +461,37 @@ describe("conversation runtime", () => {
     const transport = new FakeTransport();
     const conversations = runtime(transport);
     const sessionId = conversations.forThread("thread-1", { activate: true });
-    const running = conversations.send(sessionId, { query: "核验资料" });
+    const running = conversations.send(sessionId, { query: "verify the material" });
 
-    transport.emit(event("message.delta", 1, { delta: "未校验内容 [99]" }));
+    transport.emit(event("message.delta", 1, { delta: "unverified content [99]" }));
     transport.emit(
       event("run.completed", 2, {
-        output: "已核验结论 [1]",
+        output: "verified conclusion [1]",
         citations: [
           {
             n: 1,
             chunk_id: "chunk-1",
             source_id: "source-1",
-            heading: "依据",
-            snippet: "原文",
+            heading: "Basis",
+            snippet: "raw text",
             score: 0.9,
             event_refs: [
               {
                 id: "event-1",
-                title: "真实事件标题",
-                summary: "真实事件摘要。",
-                category: "产品动态",
+                title: "Real event title",
+                summary: "Real event summary.",
+                category: "Product news",
               },
             ],
           },
         ],
-        prompt_preview: "【系统指令】\n规则\n\n【当前问题】\n核验资料",
+        prompt_preview: "[System instructions]\nrules\n\n[Current question]\nverify the material",
       }),
     );
 
     const terminal = conversations.getSessionSnapshot(sessionId).messages.at(-1);
     expect(terminal).toMatchObject({
-      content: "已核验结论 [1]",
+      content: "verified conclusion [1]",
       citations: [
         {
           n: 1,
@@ -500,9 +500,9 @@ describe("conversation runtime", () => {
           event_refs: [
             {
               id: "event-1",
-              title: "真实事件标题",
-              summary: "真实事件摘要。",
-              category: "产品动态",
+              title: "Real event title",
+              summary: "Real event summary.",
+              category: "Product news",
             },
           ],
         },
@@ -510,7 +510,7 @@ describe("conversation runtime", () => {
     });
     await vi.advanceTimersByTimeAsync(100);
     expect(conversations.getSessionSnapshot(sessionId).messages.at(-1)?.content).toBe(
-      "已核验结论 [1]",
+      "verified conclusion [1]",
     );
 
     transport.historyPages.push(page());
@@ -523,7 +523,7 @@ describe("conversation runtime", () => {
     const transport = new FakeTransport();
     const conversations = runtime(transport);
     const sessionId = conversations.forThread("thread-1", { activate: true });
-    const running = conversations.send(sessionId, { query: "执行工具" });
+    const running = conversations.send(sessionId, { query: "run the tool" });
 
     transport.emit(event("run.started", 1));
     transport.emit(event("turn.started", 2));
@@ -531,14 +531,14 @@ describe("conversation runtime", () => {
       event("tool.approval_required", 3, {
         tool_call_id: "tool-1",
         name: "write_note",
-        label: "写入笔记",
-        arguments: { title: "测试" },
+        label: "Write a note",
+        arguments: { title: "test" },
         risk: "write",
       }),
     );
     expect(conversations.getSessionSnapshot(sessionId).run?.pendingApproval).toMatchObject({
       toolCallId: "tool-1",
-      label: "写入笔记",
+      label: "Write a note",
       resolving: false,
     });
 
@@ -550,17 +550,17 @@ describe("conversation runtime", () => {
       event("tool.started", 5, {
         tool_call_id: "tool-1",
         name: "write_note",
-        label: "写入笔记",
+        label: "Write a note",
       }),
     );
     transport.emit(
-      event("tool.progress", 4, { tool_call_id: "tool-1", message: "陈旧进度" }),
+      event("tool.progress", 4, { tool_call_id: "tool-1", message: "stale progress" }),
     );
     transport.emit(
       event(
         "tool.progress",
         6,
-        { tool_call_id: "tool-1", message: "错误 run" },
+        { tool_call_id: "tool-1", message: "wrong run" },
         1,
         "run-other",
       ),
@@ -572,16 +572,16 @@ describe("conversation runtime", () => {
     expect(conversations.getSessionSnapshot(sessionId).run?.lifecycle).toBe("stopping");
 
     transport.emit(event("run.cancelled", 7, { error: { message: "Run cancelled" } }));
-    expect(conversations.getSessionSnapshot(sessionId).error).toBe("已停止");
+    expect(conversations.getSessionSnapshot(sessionId).error).toBe("Đã dừng");
     transport.streamResult.resolve({ status: "cancelled", runId: "run-1" });
     await running;
     expect(conversations.getSessionSnapshot(sessionId).messages.at(-1)).toMatchObject({
-      content: "已停止",
+      content: "Đã dừng",
       delivery: "cancelled",
     });
     expect(conversations.getSessionSnapshot(sessionId).messages.at(-1)?.steps.at(-1)).toMatchObject({
       kind: "tool",
-      error: "已停止",
+      error: "Đã dừng",
     });
   });
 
@@ -591,13 +591,13 @@ describe("conversation runtime", () => {
     transport.approvalResult = pendingApproval.promise;
     const conversations = runtime(transport);
     const sessionId = conversations.forThread("thread-1", { activate: true });
-    const running = conversations.send(sessionId, { query: "执行工具" });
+    const running = conversations.send(sessionId, { query: "run the tool" });
 
     transport.emit(
       event("tool.approval_required", 1, {
         tool_call_id: "tool-1",
         name: "write_note",
-        label: "写入笔记",
+        label: "Write a note",
       }),
     );
     const first = conversations.approve(sessionId, "tool-1");
@@ -622,14 +622,14 @@ describe("conversation runtime", () => {
       onUniverseActivation: (activation) => activations.push(activation),
     });
     const sessionId = conversations.forThread("thread-1", { activate: true });
-    const running = conversations.send(sessionId, { query: "查资料" });
-    const activation: UniverseActivation = { query: "查资料", nodes: [], relations: [] };
+    const running = conversations.send(sessionId, { query: "look up material" });
+    const activation: UniverseActivation = { query: "look up material", nodes: [], relations: [] };
 
     transport.emit(
       event("tool.started", 1, {
         tool_call_id: "search-1",
         name: "search_context",
-        label: "检索知识库",
+        label: "Search the knowledge base",
       }),
     );
     transport.emit(event("universe.activation", 2, activation as unknown as Record<string, unknown>));
@@ -656,7 +656,7 @@ describe("conversation runtime", () => {
     const transport = new FakeTransport();
     const conversations = runtime(transport);
     const sessionId = conversations.forThread("thread-1", { activate: true });
-    void conversations.send(sessionId, { query: "长任务" });
+    void conversations.send(sessionId, { query: "a long task" });
 
     const unsubscribe = conversations.subscribeSession(sessionId, () => {});
     unsubscribe();

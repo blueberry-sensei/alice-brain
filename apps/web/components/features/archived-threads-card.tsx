@@ -25,7 +25,7 @@ import { relativeTime } from "@/lib/format";
 import { ARCHIVED_THREADS_PAGE_SIZE } from "@/lib/settings-config";
 import type { Thread } from "@/lib/types";
 
-/** 归档会话 —— 最近优先、按页加载，并支持恢复或彻底删除。 */
+/** Archived threads - most recent first, paged, with restore or permanent delete. */
 export function ArchivedThreadsCard() {
   const t = useTranslations("ArchivedThreads");
   const locale = useLocale();

@@ -28,8 +28,8 @@ class SearchEngine:
             sections=[
                 RetrievedSection(
                     chunk_id="chunk-1",
-                    heading="骑手技能证据",
-                    content="骑手技能包括路线规划和异常处理。",
+                    heading="\u9a91\u624b\u6280\u80fd\u8bc1\u636e",
+                    content="\u9a91\u624b\u6280\u80fd\u5305\u62ec\u8def\u7ebf\u89c4\u5212\u548c\u5f02\u5e38\u5904\u7406\u3002",
                     score=0.91,
                     source_config_id=targets[0][0],
                 )
@@ -60,8 +60,8 @@ class StreamingLLM:
 
 class FailingStreamingLLM(StreamingLLM):
     async def stream_complete(self, _messages):
-        yield "未完成的内容"
-        raise UpstreamError("模型连接中断")
+        yield "\u672a\u5b8c\u6210\u7684\u5185\u5bb9"
+        raise UpstreamError("\u6a21\u578b\u8fde\u63a5\u4e2d\u65ad")
 
 
 def _events(body: str) -> list[tuple[str, dict]]:
@@ -92,7 +92,7 @@ async def _auth_and_source(client: httpx.AsyncClient) -> tuple[dict[str, str], s
     source = await client.post(
         "/api/v1/sources",
         headers=headers,
-        json={"name": "流式搜索测试源"},
+        json={"name": "\u6d41\u5f0f\u641c\u7d22\u6d4b\u8bd5\u6e90"},
     )
     assert source.status_code == 201, source.text
     return headers, source.json()["id"]
@@ -118,7 +118,7 @@ async def _search(
                     "/api/v1/search/stream",
                     headers=headers,
                     json={
-                        "query": "骑手技能",
+                        "query": "\u9a91\u624b\u6280\u80fd",
                         "source_ids": [source_id],
                         **(request_overrides or {}),
                     },
@@ -132,7 +132,7 @@ async def _search(
 
 @pytest.mark.asyncio
 async def test_search_stream_emits_true_deltas_then_canonical_response():
-    llm = StreamingLLM(["骑手", "需要规划能力", " [1]"])
+    llm = StreamingLLM(["\u9a91\u624b", "\u9700\u8981\u89c4\u5212\u80fd\u529b", " [1]"])
 
     events = await _search(llm)
 
@@ -147,28 +147,28 @@ async def test_search_stream_emits_true_deltas_then_canonical_response():
     assert initial["summary"] == ""
     assert initial["sections"][0]["chunk_id"] == "chunk-1"
     assert [payload["delta"] for name, payload in events if name == "summary.delta"] == [
-        "骑手",
-        "需要规划能力",
+        "\u9a91\u624b",
+        "\u9700\u8981\u89c4\u5212\u80fd\u529b",
         " [1]",
     ]
     completed = events[-1][1]
-    assert completed["summary"] == "骑手需要规划能力 [1]"
+    assert completed["summary"] == "\u9a91\u624b\u9700\u8981\u89c4\u5212\u80fd\u529b [1]"
     assert completed["sections"] == initial["sections"]
     assert llm.stream_calls == 1
 
 
 @pytest.mark.asyncio
 async def test_search_stream_replaces_invalid_citations_with_grounded_fallback():
-    events = await _search(StreamingLLM(["不存在的引用 [9]"]))
+    events = await _search(StreamingLLM(["\u4e0d\u5b58\u5728\u7684\u5f15\u7528 [9]"]))
 
     assert [name for name, _payload in events] == [
         "result",
         "summary.delta",
         "completed",
     ]
-    assert events[1][1]["delta"] == "不存在的引用 [9]"
+    assert events[1][1]["delta"] == "\u4e0d\u5b58\u5728\u7684\u5f15\u7528 [9]"
     canonical = events[-1][1]["summary"]
-    assert "骑手技能包括路线规划和异常处理" in canonical
+    assert "\u9a91\u624b\u6280\u80fd\u5305\u62ec\u8def\u7ebf\u89c4\u5212\u548c\u5f02\u5e38\u5904\u7406" in canonical
     assert "[1]" in canonical
     assert "[9]" not in canonical
 
@@ -182,7 +182,7 @@ async def test_search_stream_provider_failure_completes_with_grounded_fallback()
         "summary.delta",
         "completed",
     ]
-    assert events[1][1]["delta"] == "未完成的内容"
+    assert events[1][1]["delta"] == "\u672a\u5b8c\u6210\u7684\u5185\u5bb9"
     assert "[1]" in events[-1][1]["summary"]
 
 
@@ -191,11 +191,11 @@ async def test_search_stream_emits_terminal_error_when_completion_cannot_be_save
     from sag_api.services import universe_service
 
     async def fail_save(*_args, **_kwargs):
-        raise UpstreamError("探索保存失败")
+        raise UpstreamError("\u63a2\u7d22\u4fdd\u5b58\u5931\u8d25")
 
     monkeypatch.setattr(universe_service, "save_exploration", fail_save)
     events = await _search(
-        StreamingLLM(["有效答案 [1]"]),
+        StreamingLLM(["\u6709\u6548\u7b54\u6848 [1]"]),
         request_overrides={"save_exploration": True},
     )
 
@@ -206,7 +206,7 @@ async def test_search_stream_emits_terminal_error_when_completion_cannot_be_save
     ]
     assert events[-1][1] == {
         "code": "upstream_error",
-        "message": "探索保存失败",
+        "message": "\u63a2\u7d22\u4fdd\u5b58\u5931\u8d25",
     }
 
 
@@ -220,7 +220,7 @@ async def test_search_answer_stream_propagates_cancellation_and_closes_provider(
 
         async def stream_complete(self, _messages):
             try:
-                yield "部分"
+                yield "\u90e8\u5206"
                 entered.set()
                 await asyncio.Event().wait()
             finally:
@@ -229,15 +229,15 @@ async def test_search_answer_stream_propagates_cancellation_and_closes_provider(
     sections = [
         RetrievedSection(
             chunk_id="chunk-1",
-            heading="骑手技能",
-            content="骑手需要路线规划能力。",
+            heading="\u9a91\u624b\u6280\u80fd",
+            content="\u9a91\u624b\u9700\u8981\u8def\u7ebf\u89c4\u5212\u80fd\u529b\u3002",
             score=0.9,
         )
     ]
 
     async def consume() -> None:
         async for _update in stream_synthesize_search_answer(
-            "骑手技能",
+            "\u9a91\u624b\u6280\u80fd",
             sections,
             llm=BlockingLLM(),
         ):
@@ -259,7 +259,7 @@ async def test_llm_plain_text_stream_closes_upstream_on_cancellation(monkeypatch
         closed = False
 
         async def __aiter__(self):
-            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="部分"))])
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="\u90e8\u5206"))])
             entered.set()
             await asyncio.Event().wait()
 

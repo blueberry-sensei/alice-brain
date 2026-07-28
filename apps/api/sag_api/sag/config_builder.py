@@ -1,6 +1,6 @@
-"""由 sag 配置装配 alicecore 的 `EngineConfig`。
+"""Assemble alicecore's `EngineConfig` from the sag configuration.
 
-支持信源级覆盖（`overrides`）——目前支持 `language`，未来可扩展 `entity_types` 等。
+Per-source overrides are supported (`overrides`) - `language` today, and things like `entity_types` later.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from alicecore.config import EmbeddingConfig, LLMConfig, LLMProviderConfig, Rela
 from sag_api.core.config import Settings
 from sag_api.core.model_providers import get_model_provider
 
-# LLM 未配置时的占位符：允许 EngineConfig 构造 / start() 建 schema（离线路径），
-# 真正的 ingest / extract / search 会在运行时因缺少凭证而报错（服务层已前置守卫）。
+# Placeholder used when no LLM is configured: it lets EngineConfig be built and start() create the schema (the offline path),
+# while a real ingest / extract / search fails at runtime for the missing credential (the service layer already guards this).
 _PLACEHOLDER = "not-configured"
 
 
@@ -82,7 +82,7 @@ def build_engine_config(settings: Settings, *, overrides: dict[str, Any] | None 
         "vector_provider": settings.sag_vector_provider,
     }
 
-    # 生产：切到关系型后端（如 Postgres），与 pgvector 单库统一
+    # Production: switch to a relational backend (such as Postgres), unified with pgvector in one database
     if settings.sag_relational_provider:
         kwargs["relational"] = RelationalConfig(
             provider=settings.sag_relational_provider,

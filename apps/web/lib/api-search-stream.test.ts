@@ -5,7 +5,7 @@ import type { SearchResponse } from "./types";
 
 function result(summary = ""): SearchResponse {
   return {
-    query: "测试问题",
+    query: "test question",
     sections: [],
     events: [],
     entities: [],
@@ -37,11 +37,11 @@ afterEach(() => {
 describe("global search stream", () => {
   it("parses fragmented result, delta and completed frames in order", async () => {
     const base = result();
-    const completed = result("流式回答 [1]");
+    const completed = result("streamed answer [1]");
     const wire = [
       `event: result\ndata: ${JSON.stringify(base)}\n\n`,
-      'event: summary.delta\ndata: {"delta":"流式"}\n\n',
-      'event: summary.delta\ndata: {"delta":"回答 [1]"}\n\n',
+      'event: summary.delta\ndata: {"delta":"streamed "}\n\n',
+      'event: summary.delta\ndata: {"delta":"answer [1]"}\n\n',
       `event: completed\ndata: ${JSON.stringify(completed)}\n\n`,
     ].join("");
     vi.stubGlobal(
@@ -51,7 +51,7 @@ describe("global search stream", () => {
     const received: string[] = [];
 
     const value = await api.streamGlobalSearch(
-      { query: "测试问题" },
+      { query: "test question" },
       {
         onResult: () => received.push("result"),
         onSummaryDelta: (delta) => received.push(delta),
@@ -60,30 +60,33 @@ describe("global search stream", () => {
     );
 
     expect(value).toEqual(completed);
-    expect(received).toEqual(["result", "流式", "回答 [1]", "completed"]);
+    expect(received).toEqual(["result", "streamed ", "answer [1]", "completed"]);
   });
 
   it("turns a streamed error into an ApiError", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        streamResponse(['event: error\ndata: {"code":"generation_failed","message":"生成失败"}\n\n']),
+        streamResponse(['event: error\ndata: {"code":"generation_failed","message":"\u751f\u6210\u5931\u8d25"}\n\n']),
       ),
     );
 
     await expect(
       api.streamGlobalSearch(
-        { query: "测试问题" },
+        { query: "test question" },
         { onResult: vi.fn(), onSummaryDelta: vi.fn(), onCompleted: vi.fn() },
       ),
-    ).rejects.toMatchObject({ code: "generation_failed", message: "生成失败" } satisfies Partial<ApiError>);
+    ).rejects.toMatchObject({
+      code: "generation_failed",
+      message: "Không xử lý được yêu cầu. Hãy thử lại sau.",
+    } satisfies Partial<ApiError>);
   });
 
   it("returns immediately at completed without waiting for the server to close", async () => {
     const encoder = new TextEncoder();
     let cancelled = false;
     const base = result();
-    const completed = result("完成 [1]");
+    const completed = result("done [1]");
     const response = new Response(
       new ReadableStream({
         start(controller) {
@@ -101,7 +104,7 @@ describe("global search stream", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
 
     await expect(api.streamGlobalSearch(
-      { query: "测试问题" },
+      { query: "test question" },
       { onResult: vi.fn(), onSummaryDelta: vi.fn(), onCompleted: vi.fn() },
     )).resolves.toEqual(completed);
     expect(cancelled).toBe(true);
@@ -114,7 +117,7 @@ describe("global search stream", () => {
       new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode(
-            'event: summary.delta\ndata: {"delta":"过早"}\n\n',
+            'event: summary.delta\ndata: {"delta":"too early"}\n\n',
           ));
         },
         cancel() {
@@ -125,7 +128,7 @@ describe("global search stream", () => {
     )));
 
     await expect(api.streamGlobalSearch(
-      { query: "测试问题" },
+      { query: "test question" },
       { onResult: vi.fn(), onSummaryDelta: vi.fn(), onCompleted: vi.fn() },
     )).rejects.toMatchObject({ code: "invalid_search_stream" });
     expect(cancelled).toBe(true);

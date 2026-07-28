@@ -37,14 +37,14 @@ router = APIRouter(prefix="/sources/{source_id}/documents", tags=["documents"])
 
 
 def _check_extension(filename: str | None) -> None:
-    """按白名单校验上传扩展名（空白名单 = 不限制）。"""
+    """Validate the upload extension against the allowlist (an empty allowlist means no restriction)."""
     allowed = settings.allowed_upload_exts
     if not allowed:
         return
     name = (filename or "").lower()
     if "." not in name or ("." + name.rsplit(".", 1)[1]) not in allowed:
-        pretty = "、".join(sorted(e.lstrip(".") for e in allowed))
-        raise ValidationError(f"不支持的文件类型。可上传：{pretty}")
+        pretty = ", ".join(sorted(e.lstrip(".") for e in allowed))
+        raise ValidationError(f"Unsupported file type. You can upload: {pretty}")
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -69,9 +69,9 @@ async def upload(
     _check_extension(file.filename)
     data = await file.read()
     if not data:
-        raise ValidationError("文件内容为空")
+        raise ValidationError("The file is empty")
     if len(data) > settings.max_upload_mb * 1024 * 1024:
-        raise ValidationError(f"文件超过 {settings.max_upload_mb}MB 上限")
+        raise ValidationError(f"The file exceeds the {settings.max_upload_mb}MB limit")
     document, _job = await create_document_from_upload(
         session,
         source,
@@ -92,7 +92,7 @@ async def ingest(
     session: AsyncSession = Depends(get_session),
     job_queue: JobQueue = Depends(get_job_queue),
 ) -> DocumentOut:
-    """统一写入接口：外部系统持续推送文本 / 消息进入信源。"""
+    """Unified write endpoint: an external system keeps pushing text / messages into a source."""
     source = await get_source(session, source_id)
     document = await ingest_content(
         session,
@@ -124,7 +124,7 @@ async def get_file(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """原始文件（预览/下载）。文件已被清理时返回 404。"""
+    """The raw file (preview/download). Returns 404 once the file has been cleaned up."""
     import os
 
     from fastapi.responses import FileResponse
@@ -134,7 +134,7 @@ async def get_file(
     source = await get_source(session, source_id)
     document = await get_document(session, source, document_id)
     if not document.storage_path or not os.path.isfile(document.storage_path):
-        raise NotFoundError("原始文件不存在或已被清理")
+        raise NotFoundError("The raw file does not exist or has been cleaned up")
     return FileResponse(
         document.storage_path,
         media_type=document.content_type or "application/octet-stream",
@@ -150,7 +150,7 @@ async def get_preview(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """返回浏览器可直接消费的预览；文本统一转为 UTF-8，下载仍保留原字节。"""
+    """Return a preview the browser can consume directly; text is normalised to UTF-8 while downloads keep the original bytes."""
     import os
 
     from fastapi.responses import FileResponse, Response
@@ -158,12 +158,12 @@ async def get_preview(
     source = await get_source(session, source_id)
     document = await get_document(session, source, document_id)
     if not document.storage_path or not os.path.isfile(document.storage_path):
-        raise NotFoundError("原始文件不存在或已被清理")
+        raise NotFoundError("The raw file does not exist or has been cleaned up")
     if is_text_preview(document.filename, document.content_type):
         try:
             decoded = await asyncio.to_thread(read_text_file, document.storage_path)
         except TextDecodingError as error:
-            raise ValidationError(f"文本预览编码识别失败：{error}") from error
+            raise ValidationError(f"Could not detect the text preview encoding: {error}") from error
         return Response(
             content=decoded.text,
             media_type="text/plain; charset=utf-8",
@@ -185,17 +185,17 @@ async def get_parsed(
     session: AsyncSession = Depends(get_session),
     engine_manager: EngineManager = Depends(get_engine_manager),
 ):
-    """返回文档成功入库时保存的整篇 Markdown，不在读取时触发重新解析。"""
+    """Return the whole Markdown saved when the document was ingested successfully; reading never triggers a re-parse."""
     from fastapi.responses import Response
 
     source = await get_source(session, source_id)
     document = await get_document(session, source, document_id)
     if document.status != DocumentStatus.READY:
         if document.status == DocumentStatus.FAILED:
-            raise ConflictError(document.error or "文档解析失败，暂无解析内容")
-        raise ConflictError("文档尚未解析完成")
+            raise ConflictError(document.error or "Document parsing failed, there is no parsed content")
+        raise ConflictError("The document has not finished parsing")
     if not document.sag_source_id:
-        raise NotFoundError("解析内容不存在，请重新处理文档")
+        raise NotFoundError("Parsed content does not exist, please reprocess the document")
 
     markdown = await engine_manager.get_document_markdown(
         source.sag_source_config_id,
@@ -203,7 +203,7 @@ async def get_parsed(
         source=source,
     )
     if not markdown:
-        raise NotFoundError("解析内容不存在，请重新处理文档")
+        raise NotFoundError("Parsed content does not exist, please reprocess the document")
     return Response(content=markdown, media_type="text/markdown")
 
 
@@ -269,4 +269,4 @@ async def delete_(
         engine_manager=engine_manager,
         job_queue=job_queue,
     )
-    return Ok(detail="文档已删除")
+    return Ok(detail="Document deleted")

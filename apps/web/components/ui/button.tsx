@@ -9,7 +9,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // 主操作：高对比中性（近黑 / 暗色下近白）—— Codex/Vercel 质感
+        // Primary action: high-contrast neutral (near black, near white in dark mode) - the Codex/Vercel feel
         default: "bg-primary text-primary-foreground shadow-soft hover:bg-primary/90 active:bg-primary/95",
         destructive: "bg-destructive text-destructive-foreground shadow-soft hover:bg-destructive/90",
         outline:

@@ -16,7 +16,7 @@ class SearchRequest(BaseModel):
 
 
 class GlobalSearchRequest(BaseModel):
-    """工作空间级搜索：默认有界候选分区，可传 source_ids 收窄（如 @某信源）。"""
+    """Workspace-level search: a bounded candidate partition by default, narrowed with source_ids (for example @a source)."""
 
     query: str = Field(min_length=1, max_length=4000)
     source_ids: list[str] | None = Field(default=None, max_length=256)

@@ -52,8 +52,8 @@ async def test_parser_routes_markdown_and_markitdown_with_cache(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_legacy_gb18030_text_is_normalized_without_markitdown(tmp_path, monkeypatch):
-    source = tmp_path / "骆驼祥子.txt"
-    expected = "《骆驼祥子》\r\n作者：老舍\r\n正文只有一个损坏字节："
+    source = tmp_path / "\u9a86\u9a7c\u7965\u5b50.txt"
+    expected = "\u300a\u9a86\u9a7c\u7965\u5b50\u300b\r\n\u4f5c\u8005\uff1a\u8001\u820d\r\n\u6b63\u6587\u53ea\u6709\u4e00\u4e2a\u635f\u574f\u5b57\u8282\uff1a"
     source.write_bytes(expected.encode("gb18030") + b"\xff")
     stale_cache = Path(f"{source}.parsed.markitdown.md")
     stale_cache.write_text("None\n", encoding="utf-8")
@@ -78,7 +78,7 @@ async def test_markitdown_none_sentinel_is_rejected(tmp_path, monkeypatch):
     source.write_bytes(b"fake-office")
     monkeypatch.setattr(service, "_markitdown_sync", lambda _path: "None")
 
-    with pytest.raises(Exception, match="未从文件中解析出有效文本"):
+    with pytest.raises(Exception, match="kh\u00f4ng l\u1ea5y \u0111\u01b0\u1ee3c n\u1ed9i dung h\u1ee3p l\u1ec7"):
         await service.prepare_document(str(source), _settings())
 
     assert not Path(f"{source}.parsed.markitdown.md").exists()
@@ -181,7 +181,7 @@ async def test_document_job_sends_parsed_markdown_to_engine(monkeypatch):
 
 
 def _simple_pdf(text: str) -> bytes:
-    """生成带可提取文本层的最小 PDF，避免测试依赖 PDF 写入库。"""
+    """Build a minimal PDF with an extractable text layer, so the test needs no PDF writing library."""
     stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET".encode()
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -238,7 +238,7 @@ def _simple_docx(path: Path, text: str) -> None:
 
 
 def test_real_markitdown_converts_pdf_and_office_files(tmp_path):
-    """依赖安装烟测：核心格式确实能产出可供引擎摄取的 Markdown。"""
+    """Dependency install smoke test: the core formats really do produce Markdown the engine can ingest."""
     from openpyxl import Workbook
     from pptx import Presentation
 

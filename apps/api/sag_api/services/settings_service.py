@@ -1,14 +1,14 @@
-"""运行期模型与知识库配置 —— 以 DB 为唯一事实来源，覆盖 `settings` 单例。
+"""Runtime model and knowledge-base configuration - the DB is the single source of truth and overrides the `settings` singleton.
 
-「模型与检索」配置存进 `settings` 表（scope=global, key=model_config）。启动时与保存后
-**就地覆盖 `settings` 单例**，端点再重建 `LLMClient` / 重置暖引擎，使改动**无需重启即生效**。
+"Model and retrieval" configuration lives in the `settings` table (scope=global, key=model_config). At startup and after each save it
+**overrides the `settings` singleton in place**, then the endpoint rebuilds `LLMClient` / resets warm engines, so a change **takes effect without a restart**.
 
-两条重要约定：
+Two important rules:
 
-1. **LLM 只能在 UI 配置。** 凭据放在 `llm_providers`（优先级链），环境变量 `SAG_LLM_*` 不再
-   参与——启动时若 DB 里没有链，扁平凭据会被**清空**，免得出现「.env 里还有一把旧 key
-   偷偷生效」这种两个事实来源的局面。
-2. **api_key 加密入库**（AES-GCM，见 `core/crypto.py`），读取时只回 `api_key_set` 布尔。
+1. **The LLM can only be configured in the UI.** Credentials live in `llm_providers` (a priority chain); the `SAG_LLM_*` environment
+   variables no longer take part - at startup, if the DB holds no chain, the flat credentials are **cleared**, so there is never
+   an "old key still quietly active in .env" second source of truth.
+2. **api_key is encrypted at rest** (AES-GCM, see `core/crypto.py`); reads only return the `api_key_set` boolean.
 """
 
 from __future__ import annotations
@@ -31,9 +31,10 @@ from sag_api.enums import SEARCH_STRATEGIES, normalize_search_strategy
 _SCOPE = "global"
 _KEY = "model_config"
 _PREFERENCES_KEY = "system_preferences"
+_SUB_AGENTS_KEY = "sub_agent_config"
 log = get_logger("settings")
 
-# 允许运行期覆盖的字段（值已由请求 schema 校验/转型）
+# Fields that may be overridden at runtime (values already validated / coerced by the request schema)
 _FIELDS = frozenset(
     {
         "llm_providers",
@@ -83,15 +84,15 @@ async def _load_row(session: AsyncSession, key: str = _KEY) -> Setting | None:
 
 
 def _normalize_overrides(overrides: dict) -> dict:
-    """清理持久化配置，确保已下线或非法策略不会进入运行时。"""
+    """Clean up persisted configuration so a retired or invalid strategy never reaches the runtime."""
     normalized = dict(overrides)
     strategy = normalized.get("search_strategy")
     if strategy == "atomic":
         normalized["search_strategy"] = normalize_search_strategy(strategy)
-        log.warning("旧检索策略 atomic 已迁移为精确模式 multi")
+        log.warning("Legacy retrieval strategy atomic has been migrated to precise mode multi")
     elif strategy is not None and strategy not in SEARCH_STRATEGIES:
         normalized.pop("search_strategy", None)
-        log.warning("忽略非法的持久化检索策略：%s", strategy)
+        log.warning("Ignoring invalid persisted retrieval strategy: %s", strategy)
     return normalized
 
 
@@ -218,10 +219,10 @@ async def stored_provider_key(
 
 
 async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
-    """判断是否需要首次模型配置。
+    """Decide whether a first-time model configuration is needed.
 
-    只看 DB：LLM 只能在 UI 配置，环境变量不再是一条有效路径，所以「已配置」= 库里有
-    至少一个启用且带 key 的 provider。
+    Only the DB counts: the LLM can only be configured in the UI and environment variables are no longer a valid path, so "configured" means
+    the database holds at least one enabled provider that has a key.
     """
     row = await _load_row(session)
     stored = dict(row.value) if row and isinstance(row.value, dict) else {}
@@ -237,9 +238,9 @@ async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
 
 
 def apply_overrides(settings: Settings, overrides: dict) -> None:
-    """把存储的覆盖值就地写回 settings 单例（请求 schema 已保证类型合法）。
+    """Write the stored overrides back into the settings singleton in place (the request schema already guarantees valid types).
 
-    `llm_providers` 会被解密后写入（运行期需要明文），并同步出扁平的 `llm_*` 头部字段。
+    `llm_providers` is decrypted before being written (the runtime needs plaintext), and the flat `llm_*` head fields are kept in sync.
     """
     normalized = _normalize_overrides(overrides)
     for key, value in normalized.items():
@@ -261,13 +262,13 @@ def apply_overrides(settings: Settings, overrides: dict) -> None:
 
 
 async def apply_startup_overrides(session_factory: async_sessionmaker) -> None:
-    """启动时：把 DB 里的模型配置覆盖到 settings 单例（在构建 LLMClient 之前调用）。"""
+    """At startup: apply the model configuration from the DB onto the settings singleton (call before building LLMClient)."""
     async with session_factory() as session:
         row = await _load_row(session)
         raw = dict(row.value) if row and isinstance(row.value, dict) else {}
         overrides = _normalize_overrides(raw)
         if row is not None and overrides != raw:
-            # JSON 列未使用 MutableDict，必须整体重新赋值才能可靠持久化。
+            # The JSON column does not use MutableDict, so the whole value must be reassigned to persist reliably.
             row.value = overrides
             await session.commit()
         apply_overrides(_settings, overrides)
@@ -280,13 +281,13 @@ async def apply_startup_overrides(session_factory: async_sessionmaker) -> None:
             try:
                 ZoneInfo(timezone)
             except (ZoneInfoNotFoundError, ValueError):
-                log.warning("忽略非法的持久化时区：%s", timezone)
+                log.warning("Ignoring invalid persisted time zone: %s", timezone)
             else:
                 _settings.timezone = timezone
 
 
 def effective_model_config() -> dict:
-    """当前生效的模型配置（读 settings 单例；密钥脱敏为 *_set 布尔）。"""
+    """The model configuration currently in effect (reads the settings singleton; secrets are masked to *_set booleans)."""
     return {
         "llm_providers": _masked_entries(_settings.llm_providers),
         # Ảnh chiếu của entry đầu chuỗi — chỉ để hiển thị "đang dùng gì", không phải nơi cấu hình.
@@ -313,11 +314,25 @@ def effective_model_config() -> dict:
     }
 
 
-def effective_system_preferences() -> dict[str, str]:
-    return {"timezone": _settings.timezone}
+async def get_system_preferences(session: AsyncSession) -> dict[str, str | bool]:
+    row = await _load_row(session, _PREFERENCES_KEY)
+    stored = dict(row.value) if row and isinstance(row.value, dict) else {}
+    timezone = stored.get("timezone")
+    configured = False
+    if isinstance(timezone, str):
+        try:
+            ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            timezone = None
+        else:
+            configured = True
+    return {
+        "timezone": timezone if isinstance(timezone, str) else _settings.timezone,
+        "timezone_configured": configured,
+    }
 
 
-async def save_system_preferences(session: AsyncSession, patch: dict) -> dict[str, str]:
+async def save_system_preferences(session: AsyncSession, patch: dict) -> dict[str, str | bool]:
     row = await _load_row(session, _PREFERENCES_KEY)
     stored = dict(row.value) if row and isinstance(row.value, dict) else {}
     timezone = patch.get("timezone")
@@ -332,16 +347,119 @@ async def save_system_preferences(session: AsyncSession, patch: dict) -> dict[st
 
     if isinstance(stored.get("timezone"), str):
         _settings.timezone = stored["timezone"]
-    return effective_system_preferences()
+    return {
+        "timezone": _settings.timezone,
+        "timezone_configured": isinstance(stored.get("timezone"), str),
+    }
+
+
+def _sub_agent_entries(row: Setting | None) -> list[dict]:
+    stored = dict(row.value) if row and isinstance(row.value, dict) else {}
+    raw = stored.get("entries")
+    return [dict(entry) for entry in raw] if isinstance(raw, list) else []
+
+
+def _masked_sub_agent_entries(entries: list[dict]) -> list[dict]:
+    """Không trả plaintext/ciphertext credential; key hỏng được báo để UI xin nhập lại."""
+    masked: list[dict] = []
+    for entry in entries:
+        item = {key: value for key, value in entry.items() if key != "credential"}
+        stored = entry.get("credential")
+        credential_ok = False
+        if isinstance(stored, str) and stored:
+            credential_ok = decrypt_secret(stored, _settings.secret_key) is not None
+        item["credential_set"] = credential_ok
+        if entry.get("provider") != "custom":
+            item["model_verified"] = bool(item.get("model_verified") and credential_ok)
+        if stored and not credential_ok:
+            item["error"] = "credential_undecryptable"
+        masked.append(item)
+    return masked
+
+
+async def get_sub_agent_config(session: AsyncSession) -> dict:
+    """Registry sub-agent cho UI/INITIALIZATION; credential luôn bị che."""
+    from sag_api.core.sub_agent_providers import sub_agent_provider_catalog
+
+    row = await _load_row(session, _SUB_AGENTS_KEY)
+    return {
+        "providers": sub_agent_provider_catalog(),
+        "entries": _masked_sub_agent_entries(_sub_agent_entries(row)),
+    }
+
+
+async def stored_sub_agent_credential(session: AsyncSession, provider: str) -> str | None:
+    """Giải mã credential đúng slot để discovery model; không nhận endpoint từ client."""
+    row = await _load_row(session, _SUB_AGENTS_KEY)
+    for entry in _sub_agent_entries(row):
+        if entry.get("provider") != provider:
+            continue
+        stored = entry.get("credential")
+        if not isinstance(stored, str) or not stored:
+            return None
+        return decrypt_secret(stored, _settings.secret_key)
+    return None
+
+
+async def save_sub_agent_config(
+    session: AsyncSession,
+    entries: list[dict],
+    *,
+    discovered_models: dict[str, set[str]] | None = None,
+) -> dict:
+    """Mã hoá credential và thay toàn bộ registry sub-agent.
+
+    Credential rỗng giữ bản cũ theo provider. Riêng custom provider đổi endpoint thì
+    bắt buộc nhập credential mới, tránh vô tình tái dùng bí mật cho một host khác.
+    """
+    row = await _load_row(session, _SUB_AGENTS_KEY)
+    previous = {entry.get("provider"): entry for entry in _sub_agent_entries(row)}
+    verified = discovered_models or {}
+    prepared: list[dict] = []
+    for entry in entries:
+        item = dict(entry)
+        provider = str(item.get("provider") or "")
+        submitted = str(item.get("credential") or "").strip()
+        if submitted:
+            item["credential"] = encrypt_secret(submitted, _settings.secret_key)
+        else:
+            old = previous.get(provider, {})
+            same_endpoint = _same_endpoint(old.get("base_url"), item.get("base_url"))
+            if old.get("credential") and (
+                provider != "custom" or same_endpoint
+            ):
+                item["credential"] = old["credential"]
+            else:
+                item.pop("credential", None)
+        old = previous.get(provider, {})
+        if provider == "custom":
+            item.pop("model_verified", None)
+        elif provider in verified:
+            item["model_verified"] = item.get("model") in verified[provider]
+        else:
+            credential_unchanged = not submitted and item.get("credential") == old.get("credential")
+            model_unchanged = item.get("model") == old.get("model")
+            item["model_verified"] = bool(
+                old.get("model_verified") and credential_unchanged and model_unchanged
+            )
+        prepared.append(item)
+
+    value = {"entries": prepared}
+    if row is None:
+        session.add(Setting(scope=_SCOPE, key=_SUB_AGENTS_KEY, value=value))
+    else:
+        row.value = value
+    await session.commit()
+    return await get_sub_agent_config(session)
 
 
 async def save_model_config(session: AsyncSession, patch: dict) -> dict:
-    """合并保存模型配置：入库 + 覆盖 settings 单例；返回生效配置（脱敏）。
+    """Merge and save the model configuration: persist it and override the settings singleton; returns the effective configuration (masked).
 
-    约定（配合 `exclude_unset`）：
-    - 字段未出现 → 保持不变；
-    - 密钥字段值为空 → 忽略（保留原密钥，避免误清空）；空值仅经显式非空覆盖；
-    - 可空字段（base_url / dimensions）值为空 → 置 None（清除）。
+    Rules (paired with `exclude_unset`):
+    - field absent -> unchanged;
+    - secret field with an empty value -> ignored (the existing secret is kept, so it cannot be wiped by accident); only an explicit non-empty value overrides it;
+    - nullable field (base_url / dimensions) with an empty value -> set to None (cleared).
     """
     row = await _load_row(session)
     raw = dict(row.value) if row and isinstance(row.value, dict) else {}
@@ -360,7 +478,7 @@ async def save_model_config(session: AsyncSession, patch: dict) -> dict:
             )
             continue
         if key in _SECRET_FIELDS:
-            if value:  # 仅非空才更新；空/None 保留原值
+            if value:  # only non-empty updates; empty/None keeps the previous value
                 stored[key] = encrypt_secret(str(value), _settings.secret_key)
             continue
         if key in _NULLABLE_FIELDS and (value is None or value == ""):

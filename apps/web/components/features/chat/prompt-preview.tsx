@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-/** 只展示运行开始前冻结的输入；本轮输出与工具结果不属于系统提示词。 */
+/** Shows only the input frozen before the run started; this turn's output and the tool results are not part of the system prompt. */
 export function PromptPreview({ preview }: { preview: string }) {
   const t = useTranslations("PromptPreview");
   return (

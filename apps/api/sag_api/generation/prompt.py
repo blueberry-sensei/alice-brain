@@ -1,4 +1,4 @@
-"""答案生成的提示词与引用构造。"""
+"""Prompts for answer generation and citation construction."""
 
 from __future__ import annotations
 
@@ -70,44 +70,45 @@ def _event_refs_by_section(events: list[Any] | None) -> dict[tuple[str, str], li
 
 
 _GUIDANCE = {
-    "zh": (
-        "【工作目标】\n"
-        "- 以解决用户问题并交付可直接使用的结果为首要目标。先在内部明确目标、对象、范围、时限、"
-        "约束和成功标准，再决定是直接回答、澄清还是调用工具；不要输出冗长的内部思维过程。\n"
-        "【澄清与推进】\n"
-        "- 若缺少的信息会实质改变结论或交付物，先集中提出 1–3 个简短、可回答的关键问题，"
-        "不要带着根本歧义盲目检索。次要信息可采用合理默认值，明确说明假设后继续推进，避免过度反问。\n"
-        "- 复杂任务先拆成必要步骤并持续推进；每次工具结果都用于更新判断。证据不足、过旧或冲突时，"
-        "应调整查询、时间范围或工具，而不是重复同一搜索。达到交付标准后及时收敛。\n"
-        "【时间与事实】\n"
-        "- 把时间视为事实的一部分。问题涉及最近、最新、当前、相对日期、版本、价格、政策、日程等"
-        "时效信息时，先调用 get_time 建立准确的当前时间锚点，再把绝对日期、合适的时间窗口和查询对象"
-        "写入后续检索；不得沿用旧对话、模型记忆或用户示例中的年份充当当前时间。\n"
-        "- 区分发布时间、事件发生时间和生效时间，优先采用与目标时间范围匹配且可核验的资料。"
-        "当事实核查、专业分析、比较、推荐或数据问题的结论依赖外部事实或时效信息时，"
-        "应积极使用最匹配的知识库或挂载工具，不要把未经核查的模型记忆写成事实。\n"
-        "【证据策略】\n"
-        "- 外部检索优先采用官方公告、产品文档、原始数据、标准/监管文件、论文等一手资料；"
-        "新闻、行业分析等二手资料用于补充背景，搜索摘要、聚合页和转载不能单独支撑关键结论。\n"
-        "- 对重要或时效性强的结论，在条件允许时用至少两个相互独立的来源交叉核验；"
-        "发生冲突时比较资料的直接性、权威性、发布时间和目标时间范围。只有低质量、冲突或无法打开的"
-        "证据时继续检索，仍无法确认就明确标为未核实，不用看似合理的模型记忆补齐。\n"
-        "【工具使用】\n"
-        "- 工具只在任务确实需要时使用。寒暄、致谢、告别、身份询问应直接回答，不调用检索。"
-        "纯创作、简单计算，以及仅处理用户已提供内容的翻译、改写或总结，也不要为了补充信息而检索；"
-        "请求存在会改变结果的歧义时先澄清，不能用搜索代替澄清。\n"
-        "- 涉及本地知识库、上传文档或 @ 范围时使用 search_context；必要时从不同角度改写查询，"
-        "并用 get_entity 做实体消歧和形成后续检索词；关键事实仍须由 search_context 或带可追溯来源的工具"
-        "确认。没有合适工具或工具失败时，说明无法核查的部分和已知边界。\n"
-        "【回答规范】\n"
-        "- 结论和可执行结果优先，综合证据并区分事实、推断、假设和资料缺口；简洁、分层，"
-        "不照抄工具输出。需要用户决策时给出清晰选项、取舍和下一步。\n"
-        "- 只有 search_context 返回的编号才能写成 [n]，并放在对应论断后；绝不虚构编号。"
-        "其他工具返回的 URL 保留为 Markdown 链接，不自行编号。只要使用了带 URL 的外部检索或阅读工具，"
-        "关键外部事实就必须在对应论断附近附上可点击的直接来源；无法形成可追溯来源时，明确证据缺口，"
-        "不要把该事实写成已确认。\n"
-        "- 输出前检查：是否回答了真实目标，关键事实是否足够新且有来源，日期与数字是否准确，"
-        "引用是否能打开，是否明确了仍存在的不确定性。"
+    "vi": (
+        "[Mục tiêu bàn giao]\n"
+        "- Ưu tiên giải quyết đúng vấn đề thật của người dùng và đưa ra kết quả có thể dùng ngay. Trước khi "
+        "trả lời, làm rõ nội bộ mục tiêu, đối tượng, phạm vi, thời hạn, ràng buộc và tiêu chí thành công; không "
+        "trình bày dài dòng quá trình suy luận ẩn.\n"
+        "[Làm rõ và tiến hành]\n"
+        "- Nếu thông tin còn thiếu có thể làm thay đổi đáng kể kết luận hoặc sản phẩm bàn giao, hãy hỏi gọn một "
+        "lượt 1–3 câu then chốt trước khi nghiên cứu. Với thiếu sót nhỏ, nêu giả định hợp lý rồi tiếp tục.\n"
+        "- Chia việc phức tạp thành các bước cần thiết và cập nhật cách làm từ từng kết quả công cụ. Khi bằng "
+        "chứng mỏng, cũ hoặc mâu thuẫn, đổi truy vấn, khoảng thời gian hoặc công cụ thay vì lặp lại cùng một tìm kiếm.\n"
+        "[Thời gian và sự kiện]\n"
+        "- Xem thời gian là một phần của mọi sự kiện có tính thời điểm. Với yêu cầu mới nhất, gần đây, hiện tại, "
+        "ngày tương đối, phiên bản, giá, chính sách hoặc lịch, gọi get_time trước rồi dùng ngày tuyệt đối, khoảng "
+        "thời gian phù hợp và đúng đối tượng trong các lần tìm kiếm tiếp theo. Không lấy ngày trong hội thoại cũ, "
+        "trí nhớ mô hình hoặc ví dụ của người dùng làm thời gian hiện tại.\n"
+        "- Phân biệt ngày công bố, ngày xảy ra và ngày có hiệu lực. Khi kết luận phụ thuộc dữ kiện bên ngoài hoặc "
+        "thay đổi theo thời gian, dùng kho tri thức hoặc công cụ phù hợp thay vì trình bày trí nhớ chưa kiểm chứng như sự thật.\n"
+        "[Chiến lược bằng chứng]\n"
+        "- Khi nghiên cứu bên ngoài, ưu tiên thông báo chính thức, tài liệu sản phẩm, dữ liệu gốc, tiêu chuẩn, tài "
+        "liệu cơ quan quản lý và bài nghiên cứu. Nguồn thứ cấp chỉ bổ sung bối cảnh; đoạn trích tìm kiếm, trang tổng "
+        "hợp và bài đăng lại không đủ để tự mình chứng minh kết luận chính.\n"
+        "- Khi có thể, đối chiếu kết luận quan trọng hoặc biến động nhanh bằng ít nhất hai nguồn độc lập. Giải quyết "
+        "mâu thuẫn theo độ trực tiếp, thẩm quyền, ngày công bố và mức phù hợp với khoảng thời gian mục tiêu. Nếu chỉ "
+        "còn bằng chứng yếu, mâu thuẫn hoặc không truy cập được, tiếp tục nghiên cứu hoặc đánh dấu chưa kiểm chứng.\n"
+        "[Dùng công cụ]\n"
+        "- Chỉ dùng công cụ khi nhiệm vụ thật sự cần. Trả lời trực tiếp lời chào, cảm ơn, tạm biệt và câu hỏi danh "
+        "tính. Không truy xuất cho sáng tác thuần tuý, tính toán đơn giản, dịch, viết lại hoặc tóm tắt chỉ dựa trên "
+        "nội dung người dùng đã cung cấp. Tìm kiếm không thay thế việc làm rõ mơ hồ quan trọng.\n"
+        "- Dùng search_context cho kho tri thức cục bộ, tệp tải lên hoặc phạm vi @; đổi góc truy vấn khi cần và chỉ "
+        "dùng get_entity để phân giải thực thể và tạo truy vấn tiếp theo. Xác nhận dữ kiện chính bằng search_context "
+        "hoặc công cụ có nguồn truy vết được; nêu rõ giới hạn nếu không có công cụ phù hợp.\n"
+        "[Quy tắc trả lời]\n"
+        "- Luôn trả lời bằng tiếng Việt, không xen ngôn ngữ khác trừ tên riêng, thuật ngữ hoặc trích dẫn nguyên văn "
+        "cần thiết. Mở đầu bằng kết luận và đầu ra dùng được; phân biệt sự thật, suy luận, giả định và khoảng trống dữ liệu.\n"
+        "- Chỉ số do search_context trả về mới được trích dẫn dạng [n] và phải đặt gần luận điểm tương ứng. Giữ URL "
+        "từ công cụ khác dưới dạng liên kết Markdown, không tự tạo số trích dẫn. Nếu không tạo được nguồn truy vết, "
+        "nêu khoảng trống bằng chứng thay vì trình bày dữ kiện như đã xác nhận.\n"
+        "- Trước khi kết thúc, kiểm tra đã trả lời đúng mục tiêu thật, bằng chứng đủ mới, ngày và số chính xác, liên "
+        "kết mở được và phần chưa chắc chắn đã được nêu rõ."
     ),
     "en": (
         "[Delivery objective]\n"
@@ -144,7 +145,8 @@ _GUIDANCE = {
         "get_entity only to disambiguate entities and shape later searches. Confirm key facts with search_context "
         "or another tool that provides traceable sources. State verification limits when no suitable tool works.\n"
         "[Answer rules]\n"
-        "- Lead with the conclusion and usable output. Synthesize evidence and distinguish facts, inference, "
+        "- Answer in English without mixing in another language except where a proper noun, term, or necessary "
+        "verbatim quotation requires it. Lead with the conclusion and usable output. Synthesize evidence and distinguish facts, inference, "
         "assumptions, and gaps. When a decision is needed, give options, tradeoffs, and a next step.\n"
         "- Only search_context numbers may be cited as [n], near the supported claim. Preserve URLs from "
         "other tools as Markdown links and never fabricate a numbered citation. Whenever an external search or "
@@ -156,10 +158,11 @@ _GUIDANCE = {
 }
 
 _TIME_RULE = {
-    "zh": (
-        "当前场景：系统时区为「{timezone}」。数据库和 API 时间戳统一为 UTC；"
-        "面向用户解释和展示时按系统时区转换。当前日期和时间是动态事实，"
-        "必须在相关任务中调用 get_time 获取，不得根据提示词、历史消息或模型知识猜测。"
+    "vi": (
+        "Bối cảnh hiện tại: múi giờ hệ thống là {timezone}. Cơ sở dữ liệu và API dùng UTC; "
+        "hãy chuyển đổi sang múi giờ hệ thống khi giải thích cho người dùng. Ngày giờ hiện tại "
+        "là dữ kiện động: phải gọi get_time khi nhiệm vụ có liên quan, không được đoán từ prompt, "
+        "lịch sử hội thoại hoặc kiến thức của mô hình."
     ),
     "en": (
         "Current context: the configured system timezone is {timezone}. Database and API timestamps use UTC; "
@@ -169,28 +172,28 @@ _TIME_RULE = {
 }
 
 _IDENTITY = {
-    "zh": "你的名字是「{name}」。当用户询问你的身份或名字时，使用这个名称回答。",
+    "vi": "Tên của bạn là {name}. Dùng tên này khi người dùng hỏi bạn là ai hoặc tên gì.",
     "en": "Your name is {name}. Use this name when the user asks who you are.",
 }
 
 _USER_TEMPLATE = {
-    "zh": "资料：\n{context}\n\n问题：{query}\n\n请依据资料作答，并在相应位置用 [序号] 标注引用。",
+    "vi": "Nguồn:\n{context}\n\nCâu hỏi: {query}\n\nHãy trả lời dựa trên nguồn và trích dẫn bằng [số].",
     "en": "Sources:\n{context}\n\nQuestion: {query}\n\nAnswer from the sources and cite with [index].",
 }
 
 
 def estimate_tokens(text: str) -> int:
-    """CJK 感知的 token 估算：中日韩 ≈1/字，其余 ≈1/4 字符（与前端口径一致）。"""
+    """CJK-aware token estimate: CJK ~1 per character, everything else ~1 per 4 characters (matching the frontend)."""
     cjk = sum(1 for ch in text if "\u3000" <= ch <= "\u9fff" or "\uf900" <= ch <= "\ufaff")
     return cjk + max(0, (len(text) - cjk) + 3) // 4
 
 
-def _format_context(sections: list[RetrievedSection]) -> str:
+def _format_context(sections: list[RetrievedSection], language: str) -> str:
     if not sections:
-        return "（无相关资料）"
+        return "Không có nguồn liên quan." if language == "vi" else "No relevant sources."
     blocks = []
     for i, s in enumerate(sections, start=1):
-        heading = s.heading or "片段"
+        heading = s.heading or ("Đoạn trích" if language == "vi" else "Excerpt")
         blocks.append(f"[{i}] {heading}\n{s.content}")
     return "\n\n".join(blocks)
 
@@ -221,7 +224,10 @@ def build_messages(
     messages.append(
         {
             "role": "user",
-            "content": _USER_TEMPLATE[lang].format(context=_format_context(sections), query=query),
+            "content": _USER_TEMPLATE[lang].format(
+                context=_format_context(sections, lang),
+                query=query,
+            ),
         }
     )
     return messages
@@ -233,12 +239,12 @@ def build_agent_messages(
     query: str,
     *,
     history: list[dict[str, str]] | None = None,
-    language: str = "zh",
-    timezone: str = "Asia/Shanghai",
+    language: str = "en",
+    timezone: str = "UTC",
     attachments: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """注入 Agent 设定（agent-first：无预置资料区，检索由工具按需完成）。"""
-    lang = language if language in _GUIDANCE else "zh"
+    """Inject the Agent persona (agent-first: no pre-filled material section, retrieval happens through tools on demand)."""
+    lang = language if language in _GUIDANCE else "en"
     persona = persona or {}
     parts = [_identity_prompt(name, lang)]
     system_prompt = str(persona.get("system_prompt") or "").strip()
@@ -248,16 +254,22 @@ def build_agent_messages(
     parts.append(_TIME_RULE[lang].format(timezone=timezone))
     guardrails = persona.get("guardrails") or []
     if guardrails:
-        parts.append("约束：" + "；".join(guardrails))
+        prefix = "Ràng buộc: " if lang == "vi" else "Constraints: "
+        parts.append(prefix + "; ".join(guardrails))
     empty_response = (persona.get("empty_response") or "").strip()
     if empty_response:
-        parts.append(f"若检索后仍无相关资料，用这句话回应：「{empty_response}」")
+        template = (
+            'Nếu sau khi truy xuất vẫn không có nguồn liên quan, hãy trả lời: "{response}"'
+            if lang == "vi"
+            else 'If retrieval still finds no relevant sources, reply: "{response}"'
+        )
+        parts.append(template.format(response=empty_response))
     messages: list[dict[str, str]] = [{"role": "system", "content": "\n\n".join(parts)}]
     if history:
         messages.extend(history)
     user_text = query
     if attachments:
-        # 视觉输入：OpenAI 兼容 content parts（图片读盘转 data URL；历史轮仅保留文本）
+        # Vision input: OpenAI-compatible content parts (images are read from disk into a data URL; older turns keep text only)
         import base64
 
         content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
@@ -277,38 +289,54 @@ def build_agent_messages(
     return messages
 
 
-def build_prompt_preview(messages: list[dict[str, Any]], *, limit: int = 6000) -> str:
-    """把运行开始前的输入上下文拼成可读预览。
+def build_prompt_preview(
+    messages: list[dict[str, Any]],
+    *,
+    language: str = "en",
+    limit: int = 6000,
+) -> str:
+    """Join the input context from before the run started into a readable preview.
 
-    多模态消息（content 为 parts 列表）：文本部分原样、图片以占位符呈现（不吐 base64）。
+    Multimodal messages (content is a list of parts): text parts stay as they are, images render as a placeholder (no base64 is emitted).
     """
     lines: list[str] = []
     current_user_index = next(
         (index for index in range(len(messages) - 1, -1, -1) if messages[index].get("role") == "user"),
         -1,
     )
-    history_labels = {"user": "历史 · 用户", "assistant": "历史 · 助手", "tool": "历史 · 工具"}
+    lang = language if language in _GUIDANCE else "en"
+    history_labels = (
+        {"user": "Lịch sử · Người dùng", "assistant": "Lịch sử · Trợ lý", "tool": "Lịch sử · Công cụ"}
+        if lang == "vi"
+        else {"user": "History · User", "assistant": "History · Assistant", "tool": "History · Tool"}
+    )
     for index, m in enumerate(messages):
         role = m.get("role", "")
         if role == "system":
-            label = "系统指令"
+            label = "Chỉ dẫn hệ thống" if lang == "vi" else "System instructions"
         elif role == "user" and index == current_user_index:
-            label = "当前问题"
+            label = "Câu hỏi hiện tại" if lang == "vi" else "Current question"
         else:
             label = history_labels.get(role, role)
         content = m.get("content", "")
         if isinstance(content, list):
             texts = [p.get("text", "") for p in content if p.get("type") == "text"]
             images = sum(1 for p in content if p.get("type") == "image_url")
-            content = "\n".join(texts) + (f"\n〔附图 ×{images}〕" if images else "")
+            image_label = f"\n[Ảnh đính kèm ×{images}]" if lang == "vi" else f"\n[Attached images ×{images}]"
+            content = "\n".join(texts) + (image_label if images else "")
         lines.append(f"【{label}】\n{content}")
     text = "\n\n".join(lines)
     if len(text) > limit:
-        # 保留系统指令的开头与当前问题所在的尾部；仅从中间压缩历史，避免
-        # 透明面板反而把本轮真正输入截掉。
+        # Keep the start of the system instructions and the tail holding the current question; compact only from the middle so
+        # the transparency panel does not end up truncating this turn's real input.
         head = max(1, int(limit * 0.62))
         tail = max(1, limit - head)
-        text = text[:head].rstrip() + "\n\n…（中间历史上下文已截断）…\n\n" + text[-tail:].lstrip()
+        omitted = (
+            "…[Đã rút gọn phần giữa của lịch sử]…"
+            if lang == "vi"
+            else "…[Middle history omitted]…"
+        )
+        text = text[:head].rstrip() + f"\n\n{omitted}\n\n" + text[-tail:].lstrip()
     return text
 
 
@@ -317,14 +345,14 @@ def build_citations(
     source_refs: dict[str, dict[str, str]] | None = None,
     events: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """由检索段落确定性地构造引用列表（编号与 prompt 中一致）。
+    """Build the citation list deterministically from the retrieved sections (numbering matches the prompt).
 
-    `source_refs`：{sag_source_config_id: {"id": sag 信源 id, "name": 信源名}}。
-    `events`：`graph_for_sections` 返回的真实抽取事件；按
-    `(source_config_id, chunk_id)` 关联，每条引用最多附带三个事件。
-    对外的 `source_id` 一律指 **sag 信源 id**（可直接路由 / 取原文），不泄漏引擎内部 id。
-    `event_refs[].content` 是抽取后的事项正文；`snippet` 仅用于原文定位，
-    不从分块正文推断或伪造事项正文。
+    `source_refs`: {sag_source_config_id: {"id": sag source id, "name": source name}}.
+    `events`: the real extracted events returned by `graph_for_sections`; joined on
+    `(source_config_id, chunk_id)`, with at most three events attached per citation.
+    The public `source_id` always means the **sag source id** (routable / can fetch the raw text); the engine-internal id is never leaked.
+    `event_refs[].content` is the extracted event body; `snippet` only locates it in the raw text and
+    is never used to infer or fabricate the event body.
     """
     citations = []
     event_refs = _event_refs_by_section(events)

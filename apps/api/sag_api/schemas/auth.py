@@ -15,7 +15,7 @@ class RegisterRequest(BaseModel):
     def _email(cls, v: str) -> str:
         v = v.strip().lower()
         if "@" not in v or "." not in v.split("@")[-1]:
-            raise ValueError("邮箱格式不正确")
+            raise ValueError("The email format is invalid")
         return v
 
 
@@ -29,7 +29,7 @@ class LoginRequest(BaseModel):
     def _name(cls, v: str) -> str:
         v = v.strip()
         if not v:
-            raise ValueError("请先填写名字")
+            raise ValueError("Please fill in your name first")
         return v
 
     @field_validator("email")
@@ -37,7 +37,7 @@ class LoginRequest(BaseModel):
     def _optional_email(cls, v: str) -> str:
         v = v.strip().lower()
         if v and ("@" not in v or "." not in v.split("@")[-1]):
-            raise ValueError("邮箱格式不正确")
+            raise ValueError("The email format is invalid")
         return v
 
 

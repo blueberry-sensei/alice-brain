@@ -16,8 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 /**
- * 统一确认对话框 —— AlertDialog 内核（真模态，Esc/点遮罩不误触发确认）。
- * 危险操作给出清晰后果说明；主按钮即动作本身（如「删除信源」而非「确定」）。
+ * Shared confirmation dialog - AlertDialog underneath (a true modal, so Esc or a backdrop click cannot confirm by accident).
+ * A destructive action states its consequence clearly, and the primary button is the action itself ("Delete source" rather than "OK").
  */
 export function ConfirmDialog({
   open,

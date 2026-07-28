@@ -5,14 +5,11 @@ import type {
   UniverseGraphPatch,
   UniverseRelation,
 } from "./types";
-import { clientErrorMessage } from "../i18n/client-errors";
-
 export const UNIVERSE_ACTIVATE_EVENT = "sag:universe-activate";
 export const UNIVERSE_RESET_EVENT = "sag:universe-reset";
 export const UNIVERSE_FOCUS_EVENT = "sag:universe-focus";
 export const UNIVERSE_SOURCE_FOCUS_EVENT = "sag:universe-source-focus";
 export const UNIVERSE_DETAIL_EVENT = "sag:universe-detail";
-export const UNIVERSE_ASK_EVENT = "sag:universe-ask";
 export const UNIVERSE_INTERACTION_EVENT = "sag:universe-interaction";
 export const UNIVERSE_RESUME_EVENT = "sag:universe-resume";
 export const UNIVERSE_CONTEXT_EVENT = "sag:universe-context";
@@ -31,7 +28,7 @@ export interface UniverseViewState {
 
 export interface UniverseContextState {
   active: boolean;
-  section: "search" | "answer" | null;
+  section: "search" | null;
 }
 
 export interface UniverseDetailTimelineItem {
@@ -52,23 +49,8 @@ export interface UniverseDetailTarget {
   navigation?: UniverseDetailTimelineNavigation;
 }
 
-export interface UniverseAskTarget extends UniverseDetailTarget {
-  request_id: number;
-  label: string;
-  prompt: string;
-}
-
-interface UniverseAskNode {
-  kind: "event" | "entity";
-  rawId: string;
-  sourceId: string;
-  label: string;
-}
-
 let pendingUniverseDetail: UniverseDetailTarget | null = null;
-let pendingUniverseAsk: UniverseAskTarget | null = null;
 let universeEpoch = 0;
-let universeAskSequence = 0;
 let currentUniverseView: UniverseViewState = {
   mode: "overview",
   source_id: null,
@@ -281,22 +263,6 @@ export function dispatchUniverseDetail(
   );
 }
 
-export function dispatchUniverseAsk(node: UniverseAskNode) {
-  if (typeof window === "undefined") return;
-  const detail: UniverseAskTarget = {
-    request_id: ++universeAskSequence,
-    kind: node.kind,
-    id: node.rawId,
-    source_id: node.sourceId,
-    label: node.label,
-    prompt: node.kind === "entity"
-      ? clientErrorMessage("askEntity", { label: node.label })
-      : clientErrorMessage("askEvent", { label: node.label }),
-  };
-  pendingUniverseAsk = detail;
-  window.dispatchEvent(new CustomEvent<UniverseAskTarget>(UNIVERSE_ASK_EVENT, { detail }));
-}
-
 export function dispatchUniversePatch(patch: UniverseGraphPatch) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
@@ -313,11 +279,5 @@ export function dispatchUniversePatchReset() {
 export function takePendingUniverseDetail() {
   const target = pendingUniverseDetail;
   pendingUniverseDetail = null;
-  return target;
-}
-
-export function takePendingUniverseAsk() {
-  const target = pendingUniverseAsk;
-  pendingUniverseAsk = null;
   return target;
 }

@@ -1,4 +1,4 @@
-"""声明式基类与通用 Mixin。"""
+"""Declarative base class and shared mixins."""
 
 from __future__ import annotations
 

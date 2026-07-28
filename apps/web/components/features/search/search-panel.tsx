@@ -53,7 +53,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-// 图谱视图较重，按需加载。
+// The graph view is heavy, so it loads on demand.
 const SearchGraph = dynamic(() => import("@/components/features/search-graph"), {
   ssr: false,
   loading: () => <Skeleton className="h-[560px] rounded-lg" />,

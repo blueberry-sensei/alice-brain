@@ -1,7 +1,10 @@
 """Retrieval answers may only see evidence that survives query-aware reranking."""
 
+import re
+
 import pytest
 
+from sag_api.core.config import settings
 from sag_api.sag import RetrievedSection
 from sag_api.services.retrieval_service import (
     fallback_search_answer,
@@ -22,11 +25,11 @@ def section(chunk_id: str, heading: str, content: str, score: float) -> Retrieve
 
 def test_rerank_prefers_direct_query_evidence_and_filters_unrelated_candidates():
     result = rerank_sections(
-        "张杰最近有什么公益动态",
+        "What charity work has Alex Rivers done recently",
         [
-            section("noise", "平台首页", "这是与体育赛事有关的热门内容。", 0.96),
-            section("answer", "张杰公益行动", "张杰为乡村儿童建设音乐教室。", 0.74),
-            section("other", "其他歌手", "另一位歌手发布了新专辑。", 0.7),
+            section("noise", "Site home", "Trending sports coverage on the front page.", 0.96),
+            section("answer", "Alex Rivers charity drive", "Alex Rivers built music classrooms for rural children.", 0.74),
+            section("other", "Another singer", "A different singer released a new album.", 0.7),
         ],
         limit=8,
     )
@@ -37,10 +40,10 @@ def test_rerank_prefers_direct_query_evidence_and_filters_unrelated_candidates()
 
 def test_rerank_uses_semantic_floor_when_no_lexical_signal_exists():
     result = rerank_sections(
-        "如何改善配送劳动者的保障",
+        "How can protections for delivery workers be improved",
         [
-            section("strong", "劳动研究", "报告讨论了工作时长、技能与收入。", 0.82),
-            section("weak", "无关附录", "网页页脚与版权信息。", 0.12),
+            section("strong", "Labour research", "The report discusses working hours, skills and income.", 0.82),
+            section("weak", "Unrelated appendix", "Page footer and copyright notice.", 0.12),
         ],
         limit=8,
     )
@@ -50,13 +53,13 @@ def test_rerank_uses_semantic_floor_when_no_lexical_signal_exists():
 
 def test_fallback_answer_cites_only_selected_sections():
     selected = [
-        section("one", "公益行动", "张杰为乡村儿童建设音乐教室。", 0.9),
-        section("two", "赈灾捐助", "团队向受灾地区捐赠物资。", 0.8),
+        section("one", "Charity drive", "Alex Rivers built music classrooms for rural children.", 0.9),
+        section("two", "Disaster relief", "The team donated supplies to the affected area.", 0.8),
     ]
 
-    answer = fallback_search_answer("张杰有哪些公益行动", selected)
+    answer = fallback_search_answer("What charity work has Alex Rivers done", selected)
 
-    assert "张杰为乡村儿童建设音乐教室" in answer
+    assert "Alex Rivers built music classrooms for rural children" in answer
     assert "[1]" in answer and "[2]" in answer
     assert "[3]" not in answer
 
@@ -67,15 +70,48 @@ async def test_invalid_llm_citation_falls_back_to_selected_evidence():
         configured = True
 
         async def complete(self, _messages):
-            return "模型引用了不存在的证据 [9]"
+            return "The model cited evidence that does not exist [9]"
 
-    selected = [section("one", "相关证据", "实际入选的事实。", 0.9)]
+    selected = [section("one", "Relevant evidence", "The fact that was actually selected.", 0.9)]
     answer = await synthesize_search_answer(
-        "问题",
+        "question",
         selected,
         llm=InvalidCitationLLM(),
     )
 
-    assert "实际入选的事实" in answer
+    assert "The fact that was actually selected" in answer
     assert "[1]" in answer
     assert "[9]" not in answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "answer", "required"),
+    [
+        ("vi", "Câu trả lời dựa trên bằng chứng [1]", "hoàn toàn bằng tiếng Việt"),
+        ("en", "An evidence-grounded answer [1]", "entirely in English"),
+    ],
+)
+async def test_search_answer_prompt_follows_configured_language(
+    monkeypatch,
+    language,
+    answer,
+    required,
+):
+    class RecordingLLM:
+        configured = True
+        messages = None
+
+        async def complete(self, messages):
+            self.messages = messages
+            return answer
+
+    monkeypatch.setattr(settings, "sag_language", language)
+    llm = RecordingLLM()
+    selected = [section("one", "Project status", "The release is ready.", 0.9)]
+
+    result = await synthesize_search_answer("What is the status?", selected, llm=llm)
+
+    assert result == answer
+    assert required in llm.messages[0]["content"]
+    assert re.search(r"[\u3400-\u9fff]", llm.messages[0]["content"]) is None

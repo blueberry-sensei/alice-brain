@@ -8,7 +8,7 @@ export type ThemePreference = "light" | "dark" | "system";
 
 export const APP_INITIALIZATION_DEFAULTS = Object.freeze({
   appMode: "normal" as AppMode,
-  workspaceSection: "answer" as WorkspaceSection,
+  workspaceSection: "search" as WorkspaceSection,
 });
 
 export const APP_INITIALIZATION_STORAGE_KEYS = Object.freeze({
@@ -117,7 +117,9 @@ export function readInitialAppState(
     storage,
     APP_INITIALIZATION_STORAGE_KEYS.workspaceSection,
   );
-  if (isWorkspaceSection(savedSection)) return { mode, section: savedSection };
+  if (isWorkspaceSection(savedSection)) {
+    return { mode, section: savedSection };
+  }
 
   const legacySection = safelyRead(
     storage,
@@ -125,7 +127,7 @@ export function readInitialAppState(
   );
   return {
     mode,
-    section: legacySection === "search" || legacySection === "answer"
+    section: legacySection === "search"
       ? legacySection
       : APP_INITIALIZATION_DEFAULTS.workspaceSection,
   };

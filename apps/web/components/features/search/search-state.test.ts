@@ -14,17 +14,17 @@ import {
   type SearchLifecycleState,
 } from "./search-state";
 
-function response(query: string, summary = "旧回答", sectionCount = 1): SearchResponse {
+function response(query: string, summary = "old answer", sectionCount = 1): SearchResponse {
   return {
     query,
     sections: Array.from({ length: sectionCount }, (_, index) => ({
       chunk_id: `chunk-${index}`,
-      heading: `证据 ${index + 1}`,
-      content: "内容",
+      heading: `Evidence ${index + 1}`,
+      content: "content",
       score: 1,
       rank: index + 1,
       source_id: "source-a",
-      source_name: "来源 A",
+      source_name: "Source A",
     })),
     events: [],
     entities: [],
@@ -38,18 +38,18 @@ function response(query: string, summary = "旧回答", sectionCount = 1): Searc
 
 function readyState(): SearchLifecycleState {
   const key = createSearchKey({
-    query: "旧问题",
+    query: "old question",
     strategy: "vector",
     sourceIds: ["source-a"],
   });
   return {
-    result: response("旧问题"),
+    result: response("old question"),
     busy: false,
     phase: "idle",
     summaryStreaming: false,
     error: "",
     committedSearchKey: key,
-    lastQuery: "旧问题",
+    lastQuery: "old question",
     lastStrategy: "vector",
     topK: 12,
     hasMore: true,
@@ -59,11 +59,11 @@ function readyState(): SearchLifecycleState {
 describe("search identity and run intent", () => {
   it("normalizes outer query whitespace and source order", () => {
     expect(createSearchKey({
-      query: "  问题  ",
+      query: "  question  ",
       strategy: "vector",
       sourceIds: ["b", "a", "a"],
     })).toBe(createSearchKey({
-      query: "问题",
+      query: "question",
       strategy: "vector",
       sourceIds: ["a", "b"],
     }));
@@ -165,21 +165,21 @@ describe("search lifecycle", () => {
       topK: 12,
       strategy: "vector",
     });
-    const base = response("新问题", "");
+    const base = response("new question", "");
     const streaming = appendSearchSummary(
-      appendSearchSummary(receiveSearchResult(current, base), "第一段"),
-      "第二段",
+      appendSearchSummary(receiveSearchResult(current, base), "part one"),
+      "part two",
     );
     expect(streaming).toMatchObject({
       busy: true,
       phase: "streaming",
       summaryStreaming: true,
     });
-    expect(streaming.result?.summary).toBe("第一段第二段");
+    expect(streaming.result?.summary).toBe("part onepart two");
 
-    const completed = completeSearchLifecycle(streaming, response("新问题", "最终回答"), {
+    const completed = completeSearchLifecycle(streaming, response("new question", "final answer"), {
       key: "new-key",
-      query: "新问题",
+      query: "new question",
       strategy: "vector",
       topK: 12,
       hasMore: false,
@@ -189,11 +189,11 @@ describe("search lifecycle", () => {
       phase: "idle",
       summaryStreaming: false,
       committedSearchKey: "new-key",
-      lastQuery: "新问题",
+      lastQuery: "new question",
       topK: 12,
       hasMore: false,
     });
-    expect(completed.result?.summary).toBe("最终回答");
+    expect(completed.result?.summary).toBe("final answer");
   });
 
   it("rolls a failed load-more back to the complete committed snapshot", () => {
@@ -204,10 +204,10 @@ describe("search lifecycle", () => {
       strategy: "vector",
     });
     const partial = appendSearchSummary(
-      receiveSearchResult(loading, response("旧问题", "", 2)),
-      "未完成",
+      receiveSearchResult(loading, response("old question", "", 2)),
+      "unfinished",
     );
-    const rolledBack = failSearchLifecycle(partial, "连接中断", committed);
+    const rolledBack = failSearchLifecycle(partial, "connection interrupted", committed);
     expect(rolledBack.result).toBe(committed.result);
     expect(rolledBack).toMatchObject({
       phase: "idle",
@@ -215,7 +215,7 @@ describe("search lifecycle", () => {
       summaryStreaming: false,
       topK: 12,
       hasMore: true,
-      error: "连接中断",
+      error: "connection interrupted",
     });
   });
 
@@ -226,16 +226,16 @@ describe("search lifecycle", () => {
         topK: 12,
         strategy: "vector",
       }),
-      response("新问题", ""),
+      response("new question", ""),
     );
-    const failed = failSearchLifecycle(loading, "检索失败", null);
+    const failed = failSearchLifecycle(loading, "search failed", null);
     expect(failed).toMatchObject({
       result: null,
       phase: "idle",
       busy: false,
       lastQuery: "",
       committedSearchKey: "",
-      error: "检索失败",
+      error: "search failed",
     });
   });
 });

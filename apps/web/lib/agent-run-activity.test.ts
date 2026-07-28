@@ -38,7 +38,7 @@ describe("agent run activity", () => {
   it("represents a direct answer without inventing a knowledge lookup", () => {
     const steps = reduce([
       event("turn.started"),
-      event("message.delta", { role: "assistant", delta: "你好" }, 1, 2),
+      event("message.delta", { role: "assistant", delta: "Hello" }, 1, 2),
       event(
         "message.completed",
         {
@@ -75,15 +75,15 @@ describe("agent run activity", () => {
         {
           tool_call_id: "time-1",
           name: "get_time",
-          label: "查询时间",
-          arguments: { timezone: "Asia/Shanghai" },
+          label: "Get time",
+          arguments: { timezone: "Asia/Ho_Chi_Minh" },
         },
         1,
         3,
       ),
       event(
         "tool.progress",
-        { tool_call_id: "time-1", message: "读取时区", details: { count: 1 } },
+        { tool_call_id: "time-1", message: "Reading the time zone", details: { count: 1 } },
         1,
         4,
       ),
@@ -105,13 +105,13 @@ describe("agent run activity", () => {
       id: "time-1",
       kind: "tool",
       name: "get_time",
-      label: "查询时间",
-      arguments: { timezone: "Asia/Shanghai" },
+      label: "Get time",
+      arguments: { timezone: "Asia/Ho_Chi_Minh" },
       status: "done",
       ms: 37,
       count: 1,
       details: { count: 1, output_preview: "2026-07-12 08:00" },
-      progress: "读取时区",
+      progress: "Reading the time zone",
     });
   });
 
@@ -120,17 +120,17 @@ describe("agent run activity", () => {
       event("tool.started", {
         tool_call_id: "remote-1",
         name: "remote_weather",
-        label: "查询天气",
-        arguments: { city: "上海" },
+        label: "Get weather",
+        arguments: { city: "Shanghai" },
       }),
       event(
         "tool.failed",
         {
           tool_call_id: "remote-1",
           name: "remote_weather",
-          label: "查询天气",
+          label: "Get weather",
           duration_ms: 410,
-          error: { message: "上游超时" },
+          error: { message: "\u4e0a\u6e38\u8d85\u65f6" },  // legacy server text, escaped on purpose
         },
         1,
         2,
@@ -138,9 +138,9 @@ describe("agent run activity", () => {
     ]);
 
     expect(steps[0]).toMatchObject({
-      label: "查询天气",
+      label: "Get weather",
       status: "error",
-      error: "上游超时",
+      error: "Không xử lý được yêu cầu. Hãy thử lại sau.",
       ms: 410,
     });
   });
@@ -151,7 +151,7 @@ describe("agent run activity", () => {
       event("tool.started", {
         tool_call_id: "tool-a",
         name: "alpha",
-        label: "工具 A",
+        label: "Tool A",
       }),
       1_000,
     );
@@ -159,7 +159,7 @@ describe("agent run activity", () => {
       steps,
       event(
         "tool.started",
-        { tool_call_id: "tool-b", name: "beta", label: "工具 B" },
+        { tool_call_id: "tool-b", name: "beta", label: "Tool B" },
         1,
         2,
       ),
@@ -202,29 +202,29 @@ describe("agent run activity", () => {
       event("turn.started"),
       event("run.cancelled", { error: { message: "Run cancelled" } }, 1, 2),
     ]);
-    expect(steps[0]).toMatchObject({ status: "error", error: "已停止" });
+    expect(steps[0]).toMatchObject({ status: "error", error: "Đã dừng" });
   });
 
   it("normalizes and merges internal and external citation artifacts", () => {
     const first = {
       n: 1,
       chunk_id: "chunk-1",
-      heading: "旧标题",
-      snippet: "旧内容",
+      heading: "Old heading",
+      snippet: "Old content",
       score: 0.8,
       source_id: "source-1",
       event_refs: [
         {
           id: "event-1",
-          title: "真实事件",
-          content: "真实事件正文",
-          summary: "真实事件摘要",
-          category: "发布",
+          title: "Real event",
+          content: "Real event body",
+          summary: "Real event summary",
+          category: "Release",
         },
         { id: "invalid", title: "" },
       ],
     };
-    const replacement = { ...first, heading: "新标题" };
+    const replacement = { ...first, heading: "New heading" };
     const second = { ...first, n: 2, chunk_id: "chunk-2" };
 
     expect(citationsFromArtifacts({ citations: [first, null, { n: "bad" }] })).toEqual([
@@ -240,9 +240,9 @@ describe("agent run activity", () => {
       n: 1,
       kind: "external",
       url: "https://example.com/report",
-      title: "行业报告",
+      title: "Industry report",
       source: "Example Research",
-      summary: "报告摘要",
+      summary: "Report summary",
       mapped: false,
       claim_level: "run",
     };
@@ -254,7 +254,7 @@ describe("agent run activity", () => {
       {
         ...external,
         chunk_id: null,
-        heading: "行业报告",
+        heading: "Industry report",
         snippet: "",
         score: 0,
         source_id: null,
@@ -270,16 +270,16 @@ describe("agent run activity", () => {
 
     expect(
       citationsFromArtifacts({
-        citations: [{ ...first, event_refs: undefined, summary: "旧版片段摘要" }],
+        citations: [{ ...first, event_refs: undefined, summary: "Legacy snippet summary" }],
       })[0],
     ).not.toHaveProperty("summary");
   });
 
   it("formats bounded tool arguments", () => {
-    expect(toolArgumentsPreview({ query: "现在几点", top_k: 8 })).toBe(
-      "query=现在几点; top_k=8",
+    expect(toolArgumentsPreview({ query: "what time is it", top_k: 8 })).toBe(
+      "query=what time is it; top_k=8",
     );
-    expect(toolArgumentsPreview({ query: "一段很长的查询文本" }, 12)).toHaveLength(13);
+    expect(toolArgumentsPreview({ query: "a rather long query text here" }, 12)).toHaveLength(13);
   });
 
   it("treats web search as internet scope even for legacy traces with mounted sources", () => {
@@ -290,7 +290,7 @@ describe("agent run activity", () => {
         name: "web_search",
         details: {
           sources: [
-            { id: "source-1", name: "西游记" },
+            { id: "source-1", name: "Journey to the West" },
             { id: "source-2", name: "SAG" },
           ],
         },
@@ -302,11 +302,11 @@ describe("agent run activity", () => {
         kind: "tool",
         step: 1,
         name: "search_context",
-        details: { sources: [{ id: "source-1", name: "西游记" }] },
+        details: { sources: [{ id: "source-1", name: "Journey to the West" }] },
       }),
     ).toEqual({
       kind: "knowledge",
-      sources: [{ id: "source-1", name: "西游记" }],
+      sources: [{ id: "source-1", name: "Journey to the West" }],
     });
 
     expect(
@@ -314,7 +314,7 @@ describe("agent run activity", () => {
         kind: "tool",
         step: 1,
         name: "get_time",
-        details: { sources: [{ id: "source-1", name: "西游记" }] },
+        details: { sources: [{ id: "source-1", name: "Journey to the West" }] },
       }),
     ).toEqual({ kind: null, sources: [] });
   });

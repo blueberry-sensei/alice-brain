@@ -24,6 +24,10 @@ import type {
   SourceGraphResponse,
   SourceMcpDescriptor,
   SystemPreferences,
+  SystemPreferencesUpdate,
+  SubAgentConfig,
+  SubAgentEntryInput,
+  SubAgentModels,
   Thread,
   TokenResponse,
   User,
@@ -365,7 +369,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (!headers["Accept-Language"])
     headers["Accept-Language"] = readClientLocale();
 
-  // 30s 超时护栏（SSE 流式接口不走此函数，不受影响）
+  // A 30s timeout guard (the SSE streaming endpoints do not go through this function and are unaffected)
   const timeoutSignal = AbortSignal.timeout(30_000);
   const signal = opts.signal
     ? AbortSignal.any([opts.signal, timeoutSignal])
@@ -437,13 +441,28 @@ export const api = {
   capabilities: () => request<Capabilities>("/api/v1/system/capabilities"),
   getSystemPreferences: () =>
     request<SystemPreferences>("/api/v1/system/preferences"),
-  saveSystemPreferences: (preferences: SystemPreferences) =>
+  saveSystemPreferences: (preferences: SystemPreferencesUpdate) =>
     request<SystemPreferences>("/api/v1/system/preferences", {
       method: "PUT",
       body: JSON.stringify(preferences),
     }),
+  getSubAgentConfig: () =>
+    request<SubAgentConfig>("/api/v1/system/sub-agent-config"),
+  getSubAgentModels: (
+    provider: Exclude<SubAgentModels["provider"], "custom">,
+    credential?: string,
+  ) =>
+    request<SubAgentModels>("/api/v1/system/sub-agent-config/models", {
+      method: "POST",
+      body: JSON.stringify({ provider, credential: credential || undefined }),
+    }),
+  saveSubAgentConfig: (entries: SubAgentEntryInput[]) =>
+    request<SubAgentConfig>("/api/v1/system/sub-agent-config", {
+      method: "PUT",
+      body: JSON.stringify({ entries }),
+    }),
 
-  // 模型与检索配置
+  // Model and retrieval configuration
   getModelConfig: () => request<ModelConfig>("/api/v1/system/model-config"),
   getModelProviders: () =>
     request<ModelProviderSpec[]>("/api/v1/system/model-providers"),
@@ -472,7 +491,7 @@ export const api = {
       `/api/v1/system/model-config/attempts?limit=${limit}`,
     ),
 
-  // 信源
+  // Sources
   listSources: () => request<Source[]>("/api/v1/sources"),
   getSource: (id: string) => request<Source>(`/api/v1/sources/${id}`),
   createSource: (b: { name: string; description?: string }) =>
@@ -492,7 +511,7 @@ export const api = {
       method: "POST",
     }),
 
-  // 文档
+  // Documents
   listDocuments: (sid: string) =>
     request<Doc[]>(`/api/v1/sources/${sid}/documents`),
   uploadDocumentWithProgress: (
@@ -681,7 +700,7 @@ export const api = {
   deleteThread: (id: string, tid: string) =>
     request(`/api/v1/agents/${id}/threads/${tid}`, { method: "DELETE" }),
 
-  // 搜索
+  // Search
   globalSearch: (b: GlobalSearchBody, signal?: AbortSignal) =>
     request<SearchResponse>("/api/v1/search", {
       method: "POST",
@@ -690,7 +709,7 @@ export const api = {
     }),
   streamGlobalSearch,
 
-  // 知识宇宙：统计轮廓 + 原子时间线与显式探索
+  // Knowledge universe: the statistical overview plus the atomic timeline and explicit exploration
   universeManifest: () =>
     request<UniverseManifest>("/api/v1/universe/manifest"),
   universeNode: (
@@ -759,7 +778,7 @@ export const api = {
   getExploration: (id: string) =>
     request<ExplorationDetail>(`/api/v1/universe/explorations/${id}`),
 
-  // 引用溯源：分块原文
+  // Citation provenance: the raw chunk text
   getChunk: (sourceId: string, chunkId: string) =>
     request<{
       chunk_id: string;
@@ -769,7 +788,7 @@ export const api = {
       source_name: string;
     }>(`/api/v1/sources/${sourceId}/chunks/${chunkId}`),
 
-  // 检索结果关联实体
+  // Entities related to a search result
   listEntities: (sid: string) =>
     request<Entity[]>(`/api/v1/sources/${sid}/entities`),
   getSourceGraph: (
@@ -799,7 +818,7 @@ export const api = {
     );
   },
 
-  // 近期动态（搜索页时间线）
+  // Recent activity (the search page timeline)
   getActivity: (sourceIds?: string[]) => {
     const params = new URLSearchParams();
     [...new Set(sourceIds?.map((sourceId) => sourceId.trim()).filter(Boolean) ?? [])]
@@ -808,7 +827,7 @@ export const api = {
     return request<ActivityItem[]>(`/api/v1/activity${query}`);
   },
 
-  // 单文档元数据 + 原始文件（预览用 blob 拉取，需带 Bearer）
+  // Single-document metadata + the raw file (the preview is fetched as a blob and needs Bearer)
   getDocument: (sid: string, did: string) =>
     request<Doc>(`/api/v1/sources/${sid}/documents/${did}`),
   documentFileUrl: (sid: string, did: string) =>
@@ -818,7 +837,7 @@ export const api = {
   documentParsedUrl: (sid: string, did: string) =>
     `${API_BASE}/api/v1/sources/${sid}/documents/${did}/parsed`,
 
-  // 对话图片附件（≤10MB，png/jpg/webp/gif）
+  // Conversation image attachments (<=10MB, png/jpg/webp/gif)
   uploadAttachment: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -832,10 +851,10 @@ export const api = {
   },
   attachmentUrl: (id: string) => `${API_BASE}/api/v1/attachments/${id}`,
 
-  // 信源即 MCP：外部宿主（Claude Desktop / Cursor）挂载信息
+  // A source is an MCP endpoint: the details for mounting it in an external host (Claude Desktop / Cursor)
   sourceMcp: (sourceId: string) =>
     request<SourceMcpDescriptor>(`/api/v1/sources/${sourceId}/mcp`),
 
-  // 整个 SAG 知识库的 MCP 挂载信息
+  // The MCP mounting details of the whole SAG knowledge base
   knowledgeMcp: () => request<KnowledgeMcpDescriptor>("/api/v1/system/mcp"),
 };

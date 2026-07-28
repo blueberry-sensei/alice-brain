@@ -1,8 +1,8 @@
 import * as React from "react";
 
 /**
- * 页面头 —— 全站统一的标题 / 说明 / 动作区布局。
- * 列表页与详情页共用，保证排版一致（字阶、间距、换行行为）。
+ * Page header - the site-wide title / description / action layout.
+ * Shared by list and detail pages, so the typography stays consistent (type scale, spacing, wrapping behaviour).
  */
 export function PageHeader({
   title,

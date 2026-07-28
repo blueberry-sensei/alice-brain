@@ -109,7 +109,7 @@ def install_engine_extract_compat() -> None:
         result = await current(self, messages, active_schema)
         repaired = _repair_extract_response(result)
         if repaired:
-            log.info("已兼容补齐 alicecore 事项抽取响应字段：%s", ", ".join(sorted(repaired)))
+            log.info("Backfilled the alicecore event extraction response fields for compatibility: %s", ", ".join(sorted(repaired)))
         return result
 
     _patched_call_llm_with_retry._sag_api_extract_meta_compat = True  # type: ignore[attr-defined]

@@ -13,7 +13,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // shadcn 标准
+        // shadcn standard
         background: c("--background"),
         foreground: c("--foreground"),
         card: { DEFAULT: c("--card"), foreground: c("--card-foreground") },
@@ -27,7 +27,7 @@ const config: Config = {
         input: c("--input"),
         ring: c("--ring"),
 
-        // shadcn sidebar 组件令牌
+        // shadcn sidebar component tokens
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -46,7 +46,7 @@ const config: Config = {
           5: "hsl(var(--chart-5))",
         },
 
-        // 状态色（成功态；danger 用标准 destructive）
+        // Status colours (success; danger uses the standard destructive)
         success: c("--success"),
       },
       fontFamily: {
@@ -59,7 +59,7 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        // 极轻，边框优先（Notion/Codex）
+        // Very light, border first (Notion/Codex)
         soft: "0 1px 2px 0 rgb(9 9 11 / 0.05), 0 1px 1px -0.5px rgb(9 9 11 / 0.04)",
         lift: "0 10px 30px -12px rgb(9 9 11 / 0.18), 0 3px 8px -3px rgb(9 9 11 / 0.08)",
       },

@@ -27,10 +27,10 @@ describe("app initialization", () => {
   it("opens the normal workspace for new users", () => {
     const storage = memoryStorage();
 
-    expect(readInitialAppState(storage)).toEqual({ mode: "normal", section: "answer" });
+    expect(readInitialAppState(storage)).toEqual({ mode: "normal", section: "search" });
     expect(APP_INITIALIZATION_DEFAULTS).toMatchObject({
       appMode: "normal",
-      workspaceSection: "answer",
+      workspaceSection: "search",
     });
   });
 
@@ -53,7 +53,7 @@ describe("app initialization", () => {
       [APP_INITIALIZATION_STORAGE_KEYS.legacyWorkspaceMini]: "search",
     });
 
-    expect(readInitialAppState(invalid)).toEqual({ mode: "normal", section: "answer" });
+    expect(readInitialAppState(invalid)).toEqual({ mode: "normal", section: "search" });
     expect(readInitialAppState(legacy)).toEqual({ mode: "explore", section: "search" });
   });
 
@@ -77,7 +77,7 @@ describe("app initialization", () => {
 
     expect(readInitialAppState(blockedStorage)).toEqual({
       mode: "normal",
-      section: "answer",
+      section: "search",
     });
     expect(() => persistAppMode(blockedStorage, "normal")).not.toThrow();
   });

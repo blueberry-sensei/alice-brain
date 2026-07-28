@@ -1,7 +1,7 @@
-"""文件上传连接器 —— MVP 内置的静态连接器。
+"""File upload connector - the static connector built into the MVP.
 
-文档由用户经 API 直接上传，不走 discover/fetch；此连接器主要提供元数据与配置校验，
-并作为「采集层抽象」的第一个落地实现，为后续动态连接器立好接口范式。
+The user uploads documents directly through the API without discover/fetch; this connector mainly supplies metadata and configuration validation,
+and is the first concrete implementation of the "ingestion layer abstraction", setting the interface pattern for the dynamic connectors to come.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from sag_api.enums import ConnectorKind
 class FileUploadConnector(Connector):
     meta = ConnectorMeta(
         kind=ConnectorKind.FILE_UPLOAD,
-        title="文件上传",
-        description="上传本地文档（Markdown / 文本 / PDF 等），由引擎解析、分块、向量化并抽取事件与实体。",
+        title="File upload",
+        description="Upload local documents (Markdown / text / PDF and more); the engine parses, chunks and vectorises them and extracts events and entities.",
         supports_sync=False,
         config_fields=[],
     )

@@ -140,16 +140,16 @@ export interface ConversationPanelProps {
   heroNode: React.ReactNode;
   emptyTitle: string;
   emptyHint: string;
-  /** 空态建议提问：点击即发送 */
+  /** Suggested questions in the empty state: clicking one sends it */
   suggestions?: string[];
   placeholder?: string;
-  /** 面板可交互时激活会话与焦点；隐藏但保留挂载时设为 false。 */
+  /** Activates the thread and the focus while the panel is interactive; set to false when it is hidden but still mounted. */
   active?: boolean;
-  /** 紧凑入口可隐藏提示词预览，避免在小面板上叠加弹框。 */
+  /** A compact entry may hide the prompt preview, so no popover stacks up in a small panel. */
   showPromptPreview?: boolean;
-  /** 消息区顶部的入口级内容，例如迷你面板的历史会话选择器。 */
+  /** Entry-level content at the top of the message area, such as the mini panel's thread picker. */
   beforeMessages?: React.ReactNode;
-  /** 来自图谱等外部入口的显式草稿；相同 id 只应用一次。 */
+  /** An explicit draft from an external entry such as the graph; the same id is applied only once. */
   draftPrompt?: { id: number; text: string } | null;
   onCitationClick?: (citation: Citation, message: ConversationMessage) => void;
   onToolMatchClick?: (
@@ -160,8 +160,8 @@ export interface ConversationPanelProps {
 }
 
 /**
- * 完整、自适应的对话面板。主工作台和迷你入口只提供外层容器，
- * 历史、流式过程、工具、引用、附件、@ 范围和输入器统一由这里管理。
+ * The full, responsive conversation panel. The main workbench and the mini entry only supply the outer container,
+ * while history, the streaming process, tools, citations, attachments, the @ scope and the composer are all managed here.
  */
 export function ConversationPanel({
   sessionId,
@@ -410,7 +410,7 @@ export function ConversationPanel({
     api.listSources().then(setSources).catch(() => {});
   }, []);
 
-  // 上下文用量估算：CJK ≈1 token/字，其余 ≈1 token/4 字符（无 tokenizer 的专业近似）
+      // Context usage estimate: CJK ~1 token per character, everything else ~1 token per 4 characters (a professional approximation without a tokenizer)
   const ctxTokens = React.useMemo(() => {
     const est = (t: string) => {
       let cjk = 0;
@@ -434,7 +434,7 @@ export function ConversationPanel({
     const f = files?.[0];
     if (!f) return;
     try {
-      const knownNames = new Set(["对话上传", "Chat uploads", t("chatUploads")]);
+      const knownNames = new Set(["Chat uploads", t("chatUploads")]);
       let src = sources.find((source) => knownNames.has(source.name));
       if (!src) {
         src = await api.createSource({
@@ -504,7 +504,7 @@ export function ConversationPanel({
         webEnabled,
       });
 
-      // send 在首次 await 前就登记 run；未登记表示被全局并发边界拒绝，保留草稿。
+      // send registers the run before its first await; not being registered means the global concurrency bound rejected it, so the draft is kept.
       if (!runtime.getSessionSnapshot(sessionId).run) {
         await request;
         return;

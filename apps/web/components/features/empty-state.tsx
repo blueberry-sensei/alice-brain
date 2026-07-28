@@ -9,7 +9,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 
-/** 空态 —— shadcn Empty 组合的薄封装，保持全站空态一致。 */
+/** Empty state - a thin wrapper over the shadcn Empty composition, keeping every empty state consistent. */
 export function EmptyState({
   icon: Icon,
   title,

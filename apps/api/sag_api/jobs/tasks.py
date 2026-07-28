@@ -1,7 +1,7 @@
-"""任务处理器 —— 按 JobType 分发。
+"""Task handlers - dispatched by JobType.
 
-处理器只关心「做什么」；状态机（queued/running/succeeded/failed）由队列 worker 统一维护。
-处理器内部负责领域对象（Document/Source）的阶段状态与计数更新。
+A handler only cares about "what to do"; the state machine (queued/running/succeeded/failed) is maintained by the queue worker.
+Inside a handler it is up to the code to update the stage state and counters of the domain object (Document/Source).
 """
 
 from __future__ import annotations
@@ -32,13 +32,13 @@ TaskHandler = Callable[[AsyncSession, Job], Awaitable[None]]
 async def process_document(
     session: AsyncSession, job: Job, *, engine_manager: EngineManager, job_queue=None
 ) -> None:
-    """解析、入库并按 chunk 并发抽取；每个 chunk 完成即保存断点。"""
+    """Parse, store and extract chunk by chunk concurrently; every finished chunk saves a checkpoint."""
     document = await session.get(Document, job.document_id) if job.document_id else None
     if document is None:
-        raise NotFoundError("文档不存在")
+        raise NotFoundError("Document does not exist")
     source = await session.get(Source, document.source_id)
     if source is None:
-        raise NotFoundError("信源不存在")
+        raise NotFoundError("Source does not exist")
     checkpoint = ProcessCheckpoint.from_payload(job.payload)
 
     async def refresh_payload() -> dict:
@@ -113,7 +113,7 @@ async def process_document(
             raise JobPaused()
     except JobPaused:
         raise
-    except Exception as e:  # noqa: BLE001 - 记录到文档后再上抛给 worker
+    except Exception as e:  # noqa: BLE001 - record on the document, then re-raise to the worker
         document.status = DocumentStatus.FAILED
         document.error = getattr(e, "message", None) or str(e)
         await session.commit()
@@ -126,7 +126,7 @@ async def process_document(
     document.progress = 100
     document.token_usage = outcome.token_usage
     document.error = None
-    # 信源聚合计数用原子 SQL 更新，避免并发读改写丢失
+    # Source aggregate counters are updated with atomic SQL to avoid a lost concurrent read-modify-write
     await session.execute(
         update(Source)
         .where(Source.id == source.id)
@@ -137,7 +137,7 @@ async def process_document(
     )
     await session.commit()
     log.info(
-        "文档处理完成 doc=%s parser=%s cached=%s chunks=%d events=%d tokens=%d",
+        "Document processed doc=%s parser=%s cached=%s chunks=%d events=%d tokens=%d",
         document.id,
         prepared.provider if prepared is not None else "checkpoint",
         prepared.cached if prepared is not None else True,
@@ -157,15 +157,15 @@ async def process_document(
 
 
 async def sync_source(session: AsyncSession, job: Job, *, engine_manager=None, job_queue=None) -> None:
-    """动态连接器同步：discover → fetch → 登记文档并入队处理（复用 ingest→extract 管线）。"""
-    # 延迟导入避免与 jobs 包的循环依赖
+    """Dynamic connector sync: discover -> fetch -> register documents and enqueue processing (reusing the ingest->extract pipeline)."""
+    # Imported lazily to avoid a circular dependency with the jobs package
     from sag_api.connectors import registry
     from sag_api.core.config import settings
     from sag_api.services.document_service import create_document_from_upload
 
     source = await session.get(Source, job.source_id) if job.source_id else None
     if source is None:
-        raise NotFoundError("信源不存在")
+        raise NotFoundError("Source does not exist")
 
     connector = registry.get(source.connector_kind)
     discovered = await connector.discover(source.config or {})
@@ -175,8 +175,8 @@ async def sync_source(session: AsyncSession, job: Job, *, engine_manager=None, j
             local = await connector.fetch(source.config or {}, d)
             with open(local.path, "rb") as f:
                 data = f.read()
-        except Exception as e:  # noqa: BLE001 - 单篇失败不影响整体同步
-            log.warning("同步抓取失败 %s：%s", d.external_id, getattr(e, "message", None) or e)
+        except Exception as e:  # noqa: BLE001 - one failed document does not stop the whole sync
+            log.warning("Sync fetch failed %s: %s", d.external_id, getattr(e, "message", None) or e)
             continue
         await create_document_from_upload(
             session,
@@ -196,7 +196,7 @@ async def sync_source(session: AsyncSession, job: Job, *, engine_manager=None, j
     job.progress = 1.0
     job.payload = {**(job.payload or {}), "discovered": len(discovered), "fetched": fetched}
     await session.commit()
-    log.info("同步完成 source=%s 发现=%d 抓取=%d", source.id, len(discovered), fetched)
+    log.info("Sync finished source=%s discovered=%d fetched=%d", source.id, len(discovered), fetched)
 
 
 async def index_universe(
@@ -208,7 +208,7 @@ async def index_universe(
 
     user_id = str((job.payload or {}).get("user_id") or "")
     if not user_id or await session.get(User, user_id) is None:
-        raise NotFoundError("知识宇宙所属用户不存在")
+        raise NotFoundError("The owner of this knowledge universe does not exist")
     job.progress = 0.1
     await session.commit()
     overview = await rebuild_universe_overview(session, engine_manager, user_id)

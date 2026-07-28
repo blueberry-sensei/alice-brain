@@ -5782,6 +5782,7 @@ export class UniverseForceSceneEngine {
       actionButtons[0].setAttribute("aria-label", viewDetailsAction);
       actionButtons[1].textContent = exploreMoreAction;
       actionButtons[1].setAttribute("aria-label", exploreMoreAction);
+      actionButtons[2].hidden = !this.callbacks.onAskNode;
       actionButtons[2].textContent = askAiAction;
       actionButtons[2].setAttribute("aria-label", askAiAction);
       nextLabels.push({

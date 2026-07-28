@@ -40,7 +40,7 @@ export function UploadZone({
     setBusy(true);
     let ok = 0;
     for (const file of Array.from(files)) {
-      // 客户端先行拦截：不支持的扩展名即时提示，省一次往返
+      // Intercept on the client first: an unsupported extension gets an instant message and saves a round trip
       if (allowedExts && allowedExts.length > 0 && !allowedExts.includes(extOf(file.name))) {
         toast.error(t("unsupportedType", { name: file.name }));
         continue;

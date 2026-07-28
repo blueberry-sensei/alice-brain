@@ -1,4 +1,4 @@
-"""全局搜索只公开快速/精确两档，并始终保持信源 fan-out 边界。"""
+"""Global search exposes only the fast and precise tiers, and always keeps the source fan-out bound."""
 
 import asyncio
 import time
@@ -60,8 +60,8 @@ async def test_global_search_forwards_validated_strategy():
                 sections=[
                     RetrievedSection(
                         chunk_id="chunk-1",
-                        heading="原始分块标题",
-                        content="原始分块正文",
+                        heading="\u539f\u59cb\u5206\u5757\u6807\u9898",
+                        content="\u539f\u59cb\u5206\u5757\u6b63\u6587",
                         score=0.82,
                         source_config_id=source_config_id,
                     )
@@ -87,18 +87,18 @@ async def test_global_search_forwards_validated_strategy():
                         source_config_id=source_config_id,
                         source_id="document-1",
                         chunk_id="event-chunk-not-in-section-results",
-                        title="外卖骑手收入变化",
-                        summary="报告分析了工作时长、技能与收入之间的关系。",
-                        category="劳动研究",
+                        title="\u5916\u5356\u9a91\u624b\u6536\u5165\u53d8\u5316",
+                        summary="\u62a5\u544a\u5206\u6790\u4e86\u5de5\u4f5c\u65f6\u957f\u3001\u6280\u80fd\u4e0e\u6536\u5165\u4e4b\u95f4\u7684\u5173\u7cfb\u3002",
+                        category="\u52b3\u52a8\u7814\u7a76",
                         score=0.94,
                     )
                 ],
                 entities=[
                     EntityInfo(
                         id="entity-1",
-                        name="外卖骑手",
-                        type="职业",
-                        description="平台配送劳动者",
+                        name="\u5916\u5356\u9a91\u624b",
+                        type="\u804c\u4e1a",
+                        description="\u5e73\u53f0\u914d\u9001\u52b3\u52a8\u8005",
                         heat=1,
                     )
                 ],
@@ -117,7 +117,7 @@ async def test_global_search_forwards_validated_strategy():
                 source = await client.post(
                     "/api/v1/sources",
                     headers=headers,
-                    json={"name": "检索策略测试源"},
+                    json={"name": "\u68c0\u7d22\u7b56\u7565\u6d4b\u8bd5\u6e90"},
                 )
                 assert source.status_code == 201, source.text
 
@@ -125,7 +125,7 @@ async def test_global_search_forwards_validated_strategy():
                     "/api/v1/search",
                     headers=headers,
                     json={
-                        "query": "策略测试",
+                        "query": "\u7b56\u7565\u6d4b\u8bd5",
                         "source_ids": [source.json()["id"]],
                         "strategy": "multi",
                         "top_k": 7,
@@ -133,7 +133,7 @@ async def test_global_search_forwards_validated_strategy():
                 )
                 assert response.status_code == 200, response.text
                 assert engine.strategy == "multi"
-                # 对外仍返回 7 条；内部有界扩大候选池，之后统一重排与过滤。
+                # It still returns 7 to the caller; internally the candidate pool grows within bounds, then everything is reranked and filtered.
                 assert engine.top_k == 21
                 assert engine.event_top_k == 7
                 assert engine.started == {"chunks", "events"}
@@ -145,24 +145,24 @@ async def test_global_search_forwards_validated_strategy():
                 assert result["stats"]["event_hits"] == 1
                 assert result["stats"]["event_recall"] == "vector+chunk"
                 assert "[1]" in result["summary"]
-                assert result["events"][0]["title"] == "外卖骑手收入变化"
+                assert result["events"][0]["title"] == "\u5916\u5356\u9a91\u624b\u6536\u5165\u53d8\u5316"
                 assert result["events"][0]["chunk_id"] == "event-chunk-not-in-section-results"
-                assert result["events"][0]["summary"].startswith("报告分析")
+                assert result["events"][0]["summary"].startswith("\u62a5\u544a\u5206\u6790")
                 assert result["events"][0]["source_id"] == source.json()["id"]
-                assert result["entities"][0]["name"] == "外卖骑手"
+                assert result["entities"][0]["name"] == "\u5916\u5356\u9a91\u624b"
                 assert result["relations"][0]["kind"] == "mentions"
 
                 deprecated = await client.post(
                     "/api/v1/search",
                     headers=headers,
-                    json={"query": "策略测试", "strategy": "atomic"},
+                    json={"query": "\u7b56\u7565\u6d4b\u8bd5", "strategy": "atomic"},
                 )
                 assert deprecated.status_code == 422
 
                 invalid = await client.post(
                     "/api/v1/search",
                     headers=headers,
-                    json={"query": "策略测试", "strategy": "unknown"},
+                    json={"query": "\u7b56\u7565\u6d4b\u8bd5", "strategy": "unknown"},
                 )
                 assert invalid.status_code == 422
     finally:
@@ -194,7 +194,7 @@ async def test_search_many_caps_candidates_and_concurrency(monkeypatch):
     monkeypatch.setattr(manager, "search", fake_search)
     outcome = await manager.search_many(
         [(f"source-{index}", None) for index in range(5)],
-        "有界检索",
+        "\u6709\u754c\u68c0\u7d22",
         strategy="multi",
     )
 
@@ -245,8 +245,8 @@ async def test_vector_search_many_uses_one_cross_source_embedding(monkeypatch):
                 "chunk_id": "chunk-2",
                 "source_id": "document-2",
                 "source_config_id": "source-2",
-                "heading": "跨源命中",
-                "content": "只生成一次查询向量。",
+                "heading": "\u8de8\u6e90\u547d\u4e2d",
+                "content": "\u53ea\u751f\u6210\u4e00\u6b21\u67e5\u8be2\u5411\u91cf\u3002",
                 "rank": 3,
                 "_score": 0.88,
             }
@@ -259,12 +259,12 @@ async def test_vector_search_many_uses_one_cross_source_embedding(monkeypatch):
 
     outcome = await manager.search_many(
         [("source-1", None), ("source-2", None)],
-        "跨源查询",
+        "\u8de8\u6e90\u67e5\u8be2",
         strategy="vector",
         top_k=9,
     )
 
-    assert embedding_queries == ["跨源查询"]
+    assert embedding_queries == ["\u8de8\u6e90\u67e5\u8be2"]
     assert repository_calls == [(9, ["source-1", "source-2"])]
     assert outcome.sections[0].chunk_id == "chunk-2"
     assert outcome.stats["chunk_recall"] == "batch-vector"
@@ -288,7 +288,7 @@ async def test_batch_vector_timeout_does_not_pay_legacy_timeout_again(monkeypatc
 
     outcome = await manager.search_many(
         [("source-1", None)],
-        "超时仍返回",
+        "\u8d85\u65f6\u4ecd\u8fd4\u56de",
         strategy="vector",
         top_k=8,
     )
@@ -315,7 +315,7 @@ async def test_single_source_timeout_includes_lock_queue(monkeypatch):
     with pytest.raises(TimeoutError):
         await manager._search_raw(
             "source-queued",
-            "排队超时",
+            "\u6392\u961f\u8d85\u65f6",
             source=None,
             strategy="vector",
             top_k=5,
@@ -341,7 +341,7 @@ async def test_search_source_candidates_use_database_limit_and_explicit_order(mo
                 [
                     Source(
                         id=source_id,
-                        name=f"候选源 {index}",
+                        name=f"\u5019\u9009\u6e90 {index}",
                         sag_source_config_id=f"candidate-{source_id}",
                         chunk_count=10_000 + index,
                         event_count=index,

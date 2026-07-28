@@ -113,7 +113,7 @@
   background: hsl(var(--foreground) / 0.12);
 }
 
-/* 细腻滚动条 */
+/* Fine scrollbar */
 ::-webkit-scrollbar {
   width: 11px;
   height: 11px;
@@ -130,7 +130,7 @@
 }
 
 @layer utilities {
-  /* 点阵网格底纹，保留给需要结构感的局部页面。 */
+  /* Dot-grid texture, kept for the local pages that need a sense of structure. */
   .bg-dot-grid {
     background-image: radial-gradient(hsl(var(--foreground) / 0.08) 1px, transparent 1px);
     background-size: 22px 22px;
@@ -550,7 +550,7 @@
     height: 100%;
   }
 
-  /* 顶部环境光晕 —— 极淡的 primary 渐晕，给大面留白增加纵深 */
+  /* Top ambient glow - a very faint primary vignette that adds depth to large empty areas */
   .bg-halo {
     background-image: radial-gradient(
       ellipse 70% 45% at 50% -5%,
@@ -1072,7 +1072,7 @@
     animation: none;
   }
 
-  /* 读事件是目的：面板更实、字号更大、对比更足——星幕上的文字必须一眼可读。 */
+  /* Reading the event is the point: a more solid panel, a larger type size, more contrast - text on the star field must be readable at a glance. */
   .sag-universe-node-label {
     --universe-card-edge-blur: 0px;
     --universe-label-connector-length: 10px;
@@ -1199,7 +1199,7 @@
     background: color-mix(in srgb, var(--universe-node-accent), transparent 56%);
   }
 
-  /* 展开只向外长一点：盒子在指针下方猛长会把 hover 顶掉，读着也晃。 */
+  /* Expanding grows only slightly outward: a box that shoots up under the pointer pushes the hover away and reads as a jolt. */
   .sag-universe-node-label[data-expanded="true"] {
     width: 252px;
     height: 100px;
@@ -1487,7 +1487,7 @@
     }
   }
 
-  /* 图谱（React Flow）主题化：边/控件走语义 token，亮暗两态一致 */
+  /* Graph (React Flow) theming: edges and controls use semantic tokens, consistent in light and dark */
   :is(.sag-graph, .sag-source-graph) .react-flow__node {
     transition: opacity 160ms ease;
   }
@@ -1521,14 +1521,14 @@
     fill: currentColor;
   }
 
-  /* 展示字：无衬线、紧字距、光学 */
+  /* Display type: sans-serif, tight tracking, optical sizing */
   .font-display {
     font-family: var(--font-sans);
     letter-spacing: -0.02em;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
   }
 
-  /* 答案正文排版 */
+  /* Answer body typography */
   .answer-prose {
     line-height: 1.68;
     font-size: 0.875rem;

@@ -122,7 +122,7 @@ export function RetrievalTestDialog({
                         {s.score.toFixed(4)}
                       </span>
                     </div>
-                    {/* 分数条：直观对比召回强弱 */}
+                    {/* Score bar: an immediate visual comparison of recall strength */}
                     <div className="mb-1.5 ml-7 h-1 overflow-hidden rounded-full bg-muted">
                       <div
                         className="h-full rounded-full bg-primary"

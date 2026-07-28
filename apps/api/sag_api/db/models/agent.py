@@ -9,20 +9,20 @@ from sag_api.enums import BindingTargetType, MessageRole
 
 
 class Agent(IDMixin, TimestampMixin, Base):
-    """Agent —— 名字 + 系统提示 + 挂载的信源/工具（经 MCP）。"""
+    """Agent - a name + a system prompt + the sources/tools it mounts (through MCP)."""
 
     __tablename__ = "agents"
 
     name: Mapped[str] = mapped_column(String(120))
-    avatar: Mapped[str] = mapped_column(String(64), default="")  # emoji / 首字母
-    # 默认 agent：开箱即用的主对话入口，知识库=全部信源（resolve_sources 特判）
+    avatar: Mapped[str] = mapped_column(String(64), default="")  # emoji / initial
+    # Default agent: the out-of-the-box main conversation entry, knowledge base = every source (special-cased in resolve_sources)
     is_default: Mapped[bool] = mapped_column(default=False, index=True)
-    # 配置：{ system_prompt, greeting, tools[] }（tools 为额外启用的工具/MCP 名）
+    # Config: { system_prompt, greeting, tools[] } (tools holds the extra enabled tool/MCP names)
     persona: Mapped[dict] = mapped_column("persona_json", JSON, default=dict)
 
 
 class AgentBinding(IDMixin, TimestampMixin, Base):
-    """Agent 挂载的东西：一个信源，或一个 MCP server（工具来源）。"""
+    """What an Agent mounts: one source, or one MCP server (a tool provider)."""
 
     __tablename__ = "agent_bindings"
     __table_args__ = (UniqueConstraint("agent_id", "target_type", "target_id", name="uq_agent_binding"),)
@@ -30,7 +30,7 @@ class AgentBinding(IDMixin, TimestampMixin, Base):
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
     target_type: Mapped[BindingTargetType] = mapped_column(SAEnum(BindingTargetType, native_enum=False, length=16))
     target_id: Mapped[str] = mapped_column(String(64), index=True)
-    # MCP server 连接配置（url 或 command/args/env）；信源绑定为空
+    # MCP server connection config (url, or command/args/env); empty for a source binding
     config: Mapped[dict] = mapped_column("config_json", JSON, default=dict)
 
 
@@ -38,7 +38,7 @@ class Thread(IDMixin, TimestampMixin, Base):
     __tablename__ = "threads"
 
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
-    title: Mapped[str] = mapped_column(String(300), default="新会话")
+    title: Mapped[str] = mapped_column(String(300), default="New chat")
     archived: Mapped[bool] = mapped_column(default=False, index=True)
 
 
@@ -47,9 +47,9 @@ class Message(IDMixin, TimestampMixin, Base):
     __table_args__ = (Index("ix_messages_thread_created_id", "thread_id", "created_at", "id"),)
 
     thread_id: Mapped[str] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"))
-    # 图片附件 meta：[{id, name, media_type}]（文件在 upload_dir/attachments/）
+    # Image attachment meta: [{id, name, media_type}] (files live in upload_dir/attachments/)
     attachments: Mapped[list] = mapped_column("attachments_json", JSON, default=list)
-    # Agentic 执行轨迹：[{kind:thinking|tool, step, name?, args?, ms, count?}]（助手消息）
+    # Agentic execution trace: [{kind:thinking|tool, step, name?, args?, ms, count?}] (assistant messages)
     steps: Mapped[list] = mapped_column("steps_json", JSON, default=list)
     role: Mapped[MessageRole] = mapped_column(SAEnum(MessageRole, native_enum=False, length=16))
     content: Mapped[str] = mapped_column(Text, default="")

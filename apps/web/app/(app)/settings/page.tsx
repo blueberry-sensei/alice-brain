@@ -5,13 +5,11 @@ import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { AccountSettings } from "@/components/features/account-settings";
-import { AgentSettingsCard } from "@/components/features/agent-settings-card";
 import { AppearanceSettings } from "@/components/features/appearance-settings";
 import { KnowledgeConfigForm } from "@/components/features/knowledge-config-form";
-import { McpSettingsCard } from "@/components/features/mcp-settings-card";
-import { McpServiceSettings } from "@/components/features/mcp-service-settings";
 import { ModelConfigForm } from "@/components/features/model-config-form";
 import { PageHeader } from "@/components/features/page-header";
+import { SubAgentConfigForm } from "@/components/features/sub-agent-config-form";
 import { UniverseViewSettings } from "@/components/features/universe-view-settings-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -49,25 +47,6 @@ function SettingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = resolveSettingsTab(searchParams.get("tab"));
-  const section = searchParams.get("section");
-
-  React.useEffect(() => {
-    if (activeTab !== "agent" || section !== "appearance") return;
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        const target = document.querySelector<HTMLElement>(
-          '[data-settings-section="assistant-appearance"]',
-        );
-        target?.scrollIntoView({ behavior: "smooth", block: "start" });
-        target?.focus({ preventScroll: true });
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
-    };
-  }, [activeTab, section]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 p-4 md:p-6">
@@ -99,23 +78,16 @@ function SettingsPageContent() {
           <AccountSettings />
         </TabsContent>
 
-        <TabsContent value="agent" className="m-0 animate-fade-in">
-          <AgentSettingsCard />
-        </TabsContent>
-
         <TabsContent value="model" className="m-0 animate-fade-in">
           <ModelConfigForm />
         </TabsContent>
 
-        <TabsContent value="knowledge" className="m-0 animate-fade-in">
-          <KnowledgeConfigForm />
+        <TabsContent value="subAgents" className="m-0 animate-fade-in">
+          <SubAgentConfigForm />
         </TabsContent>
 
-        <TabsContent value="integrations" className="m-0 animate-fade-in">
-          <div className="flex flex-col gap-6">
-            <McpSettingsCard />
-            <McpServiceSettings />
-          </div>
+        <TabsContent value="knowledge" className="m-0 animate-fade-in">
+          <KnowledgeConfigForm />
         </TabsContent>
 
         <TabsContent value="appearance" className="m-0 animate-fade-in">

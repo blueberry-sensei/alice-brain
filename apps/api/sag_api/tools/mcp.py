@@ -1,11 +1,11 @@
-"""MCP 客户端适配 —— 把远端 MCP 工具适配成 sag 的 `Tool`。
+"""MCP client adapter - adapts a remote MCP tool into a sag `Tool`.
 
-Agent 循环对「内置工具」与「远端 MCP 工具」一视同仁：本模块把一个远端 MCP
-server 暴露的每个工具包成 `MCPTool`（命名空间前缀避免撞名），其 `invoke` 转成
-一次 `session.call_tool`。连接生命周期由 `open_agent_mcp_tools` 的异步上下文托管
-——在工具循环期间保持打开，循环结束即断开。传输（stdio / Streamable-HTTP）在
-`_open_session` 内按绑定 config 选择，`MCPTool` 本身与传输无关（接一个就绪的
-`ClientSession` 即可，便于用进程内内存传输做离线测试）。
+The Agent loop treats "built-in tools" and "remote MCP tools" alike: this module wraps every tool a remote MCP
+server exposes into an `MCPTool` (with a namespace prefix so names cannot collide), whose `invoke` becomes
+one `session.call_tool`. The connection lifecycle is owned by the async context of `open_agent_mcp_tools`
+- it stays open for the duration of the tool loop and disconnects when the loop ends. The transport (stdio /
+Streamable-HTTP) is chosen inside `_open_session` from the binding config, while `MCPTool` itself is transport
+agnostic (hand it a ready `ClientSession`, which makes offline testing over an in-memory transport easy).
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def _content_to_text(result: Any) -> str:
         text = getattr(block, "text", None)
         if text:
             parts.append(text)
-    return "\n".join(parts).strip() or "（无返回）"
+    return "\n".join(parts).strip() or "(no result)"
 
 
 def _plain_value(value: Any) -> Any:
@@ -242,7 +242,7 @@ def _external_references(result: Any) -> list[dict[str, str]]:
 
 
 class MCPTool(Tool):
-    """把某个远端 MCP 工具适配成 sag 的 `Tool`。"""
+    """Adapt one remote MCP tool into a sag `Tool`."""
 
     def __init__(
         self,
@@ -266,7 +266,7 @@ class MCPTool(Tool):
 
 
 async def tools_from_session(session: ClientSession, *, namespace: str) -> list[MCPTool]:
-    """列出远端工具并逐个适配（本地名 = mcp__<namespace>__<remote>）。"""
+    """List the remote tools and adapt them one by one (local name = mcp__<namespace>__<remote>)."""
     listed = await session.list_tools()
     tools: list[MCPTool] = []
     for t in listed.tools:
@@ -276,7 +276,7 @@ async def tools_from_session(session: ClientSession, *, namespace: str) -> list[
                 session,
                 remote_name=t.name,
                 local_name=f"mcp__{namespace}__{t.name}",
-                description=t.description or f"远端 MCP 工具 {t.name}",
+                description=t.description or f"Remote MCP tool {t.name}",
                 parameters=params,
             )
         )
@@ -285,7 +285,7 @@ async def tools_from_session(session: ClientSession, *, namespace: str) -> list[
 
 @contextlib.asynccontextmanager
 async def _open_session(config: dict) -> AsyncIterator[ClientSession]:
-    """按 config 选择传输并建立就绪的 ClientSession（url → HTTP；command → stdio）。"""
+    """Choose a transport from the config and establish a ready ClientSession (url -> HTTP; command -> stdio)."""
     url = config.get("url")
     command = config.get("command")
     if url:
@@ -305,15 +305,15 @@ async def _open_session(config: dict) -> AsyncIterator[ClientSession]:
                 await session.initialize()
                 yield session
     else:
-        raise ValueError("MCP 绑定缺少 url 或 command")
+        raise ValueError("The MCP binding has neither url nor command")
 
 
 @contextlib.asynccontextmanager
 async def open_agent_mcp_tools(specs: list[tuple[str, dict]]) -> AsyncIterator[MCPToolsBundle]:
-    """打开 MCP 连接，产出工具和可安全展示的连接告警；退出即断开连接。
+    """Open the MCP connections, yielding the tools and connection warnings that are safe to display; disconnects on exit.
 
-    `specs`：`[(label, config), …]`。单个 server 连接失败不会影响其余连接；完整
-    异常仅进入服务端日志，bundle 中的 warning 不包含 URL、请求头或异常详情。
+    `specs`: `[(label, config), ...]`. One server failing to connect does not affect the others; the full
+    exception only goes to the server log, and the warning in the bundle carries no URL, header or exception detail.
     """
     tools: list[MCPTool] = []
     warnings: list[dict[str, str]] = []
@@ -323,12 +323,12 @@ async def open_agent_mcp_tools(specs: list[tuple[str, dict]]) -> AsyncIterator[M
                 session = await stack.enter_async_context(_open_session(config))
                 tools.extend(await tools_from_session(session, namespace=_namespace(label)))
             except Exception:  # noqa: BLE001
-                log.warning("MCP 连接失败 %s", label, exc_info=True)
+                log.warning("MCP connection failed %s", label, exc_info=True)
                 warnings.append(
                     {
                         "code": "mcp_connection_failed",
                         "server": _namespace(label),
-                        "message": "MCP 服务连接失败，本轮已跳过该服务。",
+                        "message": "Could not connect to the MCP service; it was skipped this turn.",
                     }
                 )
         yield MCPToolsBundle(tools=tools, warnings=warnings)

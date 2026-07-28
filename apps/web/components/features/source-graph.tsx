@@ -728,7 +728,7 @@ export function SourceGraph({
       alive = false;
       controller.abort();
     };
-    // graph 不能加入依赖；刷新时保留旧画面，避免闪烁。
+    // graph must not be a dependency; the old picture is kept while refreshing, so nothing flickers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     source.id,

@@ -1,2 +1,2 @@
 class JobPaused(Exception):
-    """协作式暂停信号；不是失败，不触发重试。"""
+    """Cooperative pause signal; not a failure, and it does not trigger a retry."""

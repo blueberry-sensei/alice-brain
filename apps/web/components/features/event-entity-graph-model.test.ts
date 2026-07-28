@@ -10,7 +10,7 @@ function graphFixture(): SourceGraphResponse {
       {
         id: "event-linked",
         document_id: null,
-        title: "关联事件",
+        title: "Linked event",
         summary: "",
         category: "",
         rank: 0,
@@ -21,7 +21,7 @@ function graphFixture(): SourceGraphResponse {
       {
         id: "event-isolated",
         document_id: null,
-        title: "孤立事件",
+        title: "Isolated event",
         summary: "",
         category: "",
         rank: 0,
@@ -31,8 +31,8 @@ function graphFixture(): SourceGraphResponse {
       },
     ],
     entities: [
-      { id: "entity-linked", name: "关联实体", type: "concept", description: "", heat: 1 },
-      { id: "entity-isolated", name: "孤立实体", type: "concept", description: "", heat: 0 },
+      { id: "entity-linked", name: "Linked entity", type: "concept", description: "", heat: 1 },
+      { id: "entity-isolated", name: "Isolated entity", type: "concept", description: "", heat: 0 },
     ],
     relations: [
       {
@@ -51,7 +51,7 @@ function graphFixture(): SourceGraphResponse {
         target_kind: "entity",
         kind: "mentions",
         weight: 1,
-        description: "重复方向",
+        description: "Duplicate direction",
       },
     ],
     counts: {
@@ -90,7 +90,7 @@ describe("sliceEventEntityGraph", () => {
     graph.events = Array.from({ length: 73 }, (_, index) => ({
       ...graph.events[index === 0 ? 0 : 1],
       id: `event-${index + 1}`,
-      title: `事件 ${index + 1}`,
+      title: `Event ${index + 1}`,
     }));
     graph.relations = [
       {

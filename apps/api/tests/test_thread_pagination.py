@@ -1,4 +1,4 @@
-"""会话列表分页：最近优先、页间无重复、参数受约束。"""
+"""Thread list pagination: most recent first, no duplicates across pages, bounded parameters."""
 
 import httpx
 import pytest
@@ -27,7 +27,7 @@ async def test_archived_threads_support_stable_offset_pagination():
                 created = await client.post(
                     f"/api/v1/agents/{agent['id']}/threads",
                     headers=headers,
-                    json={"title": f"分页会话 {index}"},
+                    json={"title": f"\u5206\u9875\u4f1a\u8bdd {index}"},
                 )
                 assert created.status_code == 201, created.text
                 archived = await client.patch(

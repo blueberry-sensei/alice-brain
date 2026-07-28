@@ -1,4 +1,12 @@
-export const DEFAULT_TIME_ZONE = "Asia/Shanghai";
+export const DEFAULT_TIME_ZONE = "UTC";
+
+export function detectSystemTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone?.trim() || DEFAULT_TIME_ZONE;
+  } catch {
+    return DEFAULT_TIME_ZONE;
+  }
+}
 
 export function parseUtcDate(value: string): Date {
   const trimmed = value.trim();

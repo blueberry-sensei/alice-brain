@@ -1,2 +1,2 @@
--- pgvector 扩展（pgvector/pgvector 镜像已内置，此处启用）
+-- The pgvector extension (built into the pgvector/pgvector image; enabled here)
 CREATE EXTENSION IF NOT EXISTS vector;

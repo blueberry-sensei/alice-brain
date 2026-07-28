@@ -31,15 +31,15 @@ afterEach(() => {
 
 function searchResponse(): SearchResponse {
   return {
-    query: "跨来源实体",
+    query: "cross-source entity",
     sections: [],
     events: [
       {
         id: "event-a",
         source_id: "source-a",
-        source_name: "来源 A",
+        source_name: "Source A",
         document_id: null,
-        title: "事件 A",
+        title: "Event A",
         summary: "",
         category: "event",
         rank: 1,
@@ -51,9 +51,9 @@ function searchResponse(): SearchResponse {
       {
         id: "event-b",
         source_id: "source-b",
-        source_name: "来源 B",
+        source_name: "Source B",
         document_id: null,
-        title: "事件 B",
+        title: "Event B",
         summary: "",
         category: "event",
         rank: 1,
@@ -64,7 +64,7 @@ function searchResponse(): SearchResponse {
       },
     ],
     entities: [
-      { id: "entity-shared", name: "共享实体", type: "topic", description: "", heat: 2 },
+      { id: "entity-shared", name: "Shared entity", type: "topic", description: "", heat: 2 },
     ],
     relations: ["event-a", "event-b"].map((eventId) => ({
       source_id: eventId,
@@ -175,14 +175,14 @@ describe("universe view state", () => {
       resumes += 1;
     });
 
-    dispatchUniverseContext({ active: true, section: "answer" });
-    expect(readUniverseContext()).toEqual({ active: true, section: "answer" });
+    dispatchUniverseContext({ active: true, section: "search" });
+    expect(readUniverseContext()).toEqual({ active: true, section: "search" });
 
     dispatchUniverseResume();
 
     expect(readUniverseContext()).toEqual({ active: false, section: null });
     expect(contexts).toEqual([
-      { active: true, section: "answer" },
+      { active: true, section: "search" },
       { active: false, section: null },
     ]);
     expect(resumes).toBe(1);

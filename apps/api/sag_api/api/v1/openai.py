@@ -1,10 +1,10 @@
-"""OpenAI 兼容对话端点——把任意 Agent 当作一个「带引用的模型」调用。
+"""OpenAI-compatible chat endpoint - call any Agent as if it were a "model with citations".
 
     POST /api/v1/openai/{agent_id}/chat/completions
     Authorization: Bearer <sag JWT>
 
-支持 stream / 非流两种；请求体沿用 OpenAI Chat Completions 结构。
-检索、系统提示、防幻觉短路与站内对话完全一致，便于外部系统无缝接入。
+Both stream and non-stream are supported; the request body follows the OpenAI Chat Completions shape.
+Retrieval, the system prompt and the anti-hallucination short circuit are identical to the in-app conversation, so external systems integrate seamlessly.
 """
 
 from __future__ import annotations
@@ -46,16 +46,16 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     model: str | None = None
     stream: bool = False
-    # 兼容字段，接收但不强制透传（检索参数以助手人格为准）
+    # Compatibility fields: accepted but not force-forwarded (retrieval parameters follow the assistant persona)
     temperature: float | None = None
     max_tokens: int | None = None
 
 
 def _split_query(messages: list[ChatMessage]) -> tuple[str, list[dict[str, str]]]:
-    """取最后一条 user 消息为本轮问题，其余 user/assistant 作为历史。"""
+    """Take the last user message as this turn's question and the rest of user/assistant as history."""
     last_user = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "user"), None)
     if last_user is None:
-        raise ValidationError("messages 中缺少 user 消息")
+        raise ValidationError("messages contains no user message")
     query = messages[last_user].content
     history = [
         {"role": m.role, "content": m.content}
@@ -81,14 +81,14 @@ async def chat_completions(
 
     plan = svc.build_ask_context(agent=agent, query=query, history=history)
     if not llm.configured:
-        raise ConfigurationError("尚未配置 LLM，无法生成回答")
+        raise ConfigurationError("No LLM configured yet, cannot generate an answer")
 
     created = int(time.time())
     model = body.model or f"sag:{agent.name}"
     cid = f"chatcmpl-{agent_id[:12]}-{created}"
 
     def _events():
-        # 无状态：thread_id=None → 不落库；复用同一 Agent 循环
+        # Stateless: thread_id=None -> nothing is persisted; the same Agent loop is reused
         return agent_service.generate_stream(
             SessionLocal,
             plan=plan,
@@ -135,7 +135,7 @@ async def chat_completions(
                             yield chunk({"content": suffix})
                 elif event.type in (EventType.RUN_FAILED.value, EventType.RUN_CANCELLED.value):
                     error = payload.get("error") or {}
-                    yield chunk({"content": f"\n[错误] {error.get('message', '生成失败')}"})
+                    yield chunk({"content": f"\n[error] {error.get('message', 'generation failed')}"})
             yield chunk({}, finish="stop")
             yield "data: [DONE]\n\n"
 
@@ -143,7 +143,7 @@ async def chat_completions(
             gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
         )
 
-    # 非流式：消费同一事件流，聚合为最终答案
+    # Non-streaming: consume the same event stream and aggregate it into the final answer
     parts: list[str] = []
     final_output = ""
     citations = plan.citations
@@ -158,7 +158,7 @@ async def chat_completions(
             usage = payload.get("usage") or {}
         elif event.type in (EventType.RUN_FAILED.value, EventType.RUN_CANCELLED.value):
             error = payload.get("error") or {}
-            raise UpstreamError(error.get("message", "生成失败"))
+            raise UpstreamError(error.get("message", "Generation failed"))
     return {
         "id": cid,
         "object": "chat.completion",
@@ -176,6 +176,6 @@ async def chat_completions(
             "completion_tokens": usage.get("output_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
         },
-        # sag 扩展：引用溯源（标准客户端忽略未知字段）
+        # sag extension: citation provenance (standard clients ignore unknown fields)
         "sag": {"citations": citations, "sources": len(citations)},
     }

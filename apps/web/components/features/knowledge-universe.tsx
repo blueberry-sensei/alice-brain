@@ -41,7 +41,6 @@ import {
   UNIVERSE_RESET_EVENT,
   UNIVERSE_RESUME_EVENT,
   UNIVERSE_SOURCE_FOCUS_EVENT,
-  dispatchUniverseAsk,
   dispatchUniversePatch,
   dispatchUniversePatchReset,
   dispatchUniverseView,
@@ -214,7 +213,6 @@ interface RetainedExploration {
 interface ContextGraphSession {
   sceneEpoch: number;
   activationCount: number;
-  answerTurnCount: number;
 }
 
 interface ExpansionSnapshotContext {
@@ -331,7 +329,6 @@ export function KnowledgeUniverse({
   const [timelinePlaying, setTimelinePlaying] = React.useState(false);
   const [contextWorkspace, setContextWorkspace] =
     React.useState<UniverseContextState>(readUniverseContext);
-  const [contextActivationCount, setContextActivationCount] = React.useState(0);
   const [timelinePlaybackOrder, setTimelinePlaybackOrder] =
     React.useState<UniverseTimelinePlaybackOrder>("reverse");
   const [documentHidden, setDocumentHidden] = React.useState(false);
@@ -975,7 +972,6 @@ export function KnowledgeUniverse({
       retainedExplorationRef.current = null;
       contextGraphSessionRef.current = null;
       resetAccumulationKernel(true);
-      setContextActivationCount(0);
       sourceSessionRef.current = null;
       setTimelineWindow(null);
       expansionSnapshotsRef.current.clear();
@@ -1177,7 +1173,6 @@ export function KnowledgeUniverse({
     contextGraphSessionRef.current = {
       sceneEpoch,
       activationCount: 0,
-      answerTurnCount: 0,
     };
     expandAbortRef.current?.abort();
     expandAbortRef.current = null;
@@ -1199,7 +1194,6 @@ export function KnowledgeUniverse({
     cursorsRef.current.clear();
     expandedAnchorsRef.current.clear();
     commitWorkingSet(emptyUniverseWorkingSet(sceneEpoch));
-    setContextActivationCount(0);
     resetAccumulationKernel(false);
     setLockedKey(null);
     setSelectedKey(null);
@@ -1233,7 +1227,6 @@ export function KnowledgeUniverse({
   const restoreRetainedExploration = React.useCallback(() => {
     const snapshot = retainedExplorationRef.current;
     contextGraphSessionRef.current = null;
-    setContextActivationCount(0);
     if (!snapshot) {
       resetScene(epochRef.current + 1);
       return;
@@ -1347,8 +1340,6 @@ export function KnowledgeUniverse({
         epoch: contextSession.sceneEpoch,
       };
       contextSession.activationCount += 1;
-      if (origin === "assistant") contextSession.answerTurnCount += 1;
-      setContextActivationCount(contextSession.answerTurnCount);
       evidenceOriginRef.current = origin;
       setEvidenceOrigin(origin);
       appendActivationToAccumulation(normalizedActivation, origin);
@@ -1392,7 +1383,6 @@ export function KnowledgeUniverse({
       }
       retainedExplorationRef.current = null;
       contextGraphSessionRef.current = null;
-      setContextActivationCount(0);
       resetScene(eventEpoch);
     };
     const onResume = () => {
@@ -2803,7 +2793,6 @@ export function KnowledgeUniverse({
       retainedExplorationRef.current = null;
       contextGraphSessionRef.current = null;
       contextProjectionClosedRef.current = false;
-      setContextActivationCount(0);
       resetAccumulationKernel(true);
       dispatchUniverseResume();
       // Explicit source navigation starts a timeline browse session even when
@@ -3320,13 +3309,6 @@ export function KnowledgeUniverse({
     void expandNode(node as UniverseConcrete3DNode);
   }, [clearSelection, expandNode]);
 
-  const handleAskNode = React.useCallback((node: UniverseSceneNode) => {
-    if (node.kind === "source") return;
-    setTimelinePlaying(false);
-    releaseReadingFocus();
-    dispatchUniverseAsk(node as UniverseConcrete3DNode);
-  }, [releaseReadingFocus]);
-
   const timelinePlaybackPlan = React.useMemo(() => planUniverseTimelinePlayback({
     enabled: timelinePlaying && interactive && timelineJourney.enabled,
     order: timelinePlaybackOrder,
@@ -3661,11 +3643,9 @@ export function KnowledgeUniverse({
             actionLabels={{
               viewDetails: t("nodeActions.viewDetails"),
               exploreMore: t("nodeActions.exploreMore"),
-              askAi: t("nodeActions.askAi"),
             }}
             onViewDetails={handleViewDetails}
             onExploreMore={handleExploreMore}
-            onAskNode={handleAskNode}
             onUserInteraction={handleSceneInteraction}
             onUnavailable={handleSceneUnavailable}
           />
@@ -3896,16 +3876,7 @@ export function KnowledgeUniverse({
           data-universe-context-return="true"
         >
           <span className="min-w-0 truncate whitespace-nowrap text-[10px] text-muted-foreground">
-            {contextWorkspace.section === "answer"
-              ? t("controls.answerContext", {
-                  count: Math.max(
-                    contextActivationCount,
-                    sessionState.evidenceBatchCount,
-                  ),
-                  events: contextGraphSessionRef.current ? summary?.events ?? 0 : 0,
-                  entities: contextGraphSessionRef.current ? summary?.entities ?? 0 : 0,
-                })
-              : contextWorkspace.section === "search"
+            {contextWorkspace.section === "search"
                 ? t("controls.searchContext")
                 : t("controls.evidenceContext", {
                     count: sessionState.evidenceBatchCount,

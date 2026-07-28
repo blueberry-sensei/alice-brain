@@ -1,7 +1,7 @@
-"""对话图片附件 —— 上传与取回（本地落盘，鉴权访问）。
+"""Conversation image attachments - upload and retrieval (stored on local disk, access is authenticated).
 
-仅图片、≤10MB；id = uuid+原始扩展名（正则校验，杜绝路径穿越）。
-消息里只存附件 meta（id/media_type/name），发送给视觉模型时由生成层读盘转 base64。
+Images only, <=10MB; id = uuid + the original extension (regex validated, so path traversal is impossible).
+A message stores only the attachment meta (id/media_type/name); the generation layer reads the file and converts it to base64 when sending it to a vision model.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _dir() -> str:
 
 
 def attachment_path(attachment_id: str) -> str | None:
-    """id → 磁盘路径（校验失败/不存在返回 None）。供生成层复用。"""
+    """id -> path on disk (returns None when validation fails or the file is missing). Reused by the generation layer."""
     if not _ID_RE.match(attachment_id or ""):
         return None
     path = os.path.join(_dir(), attachment_id)
@@ -50,10 +50,10 @@ async def upload(
     ext = os.path.splitext(file.filename or "")[1].lower()
     media_type = _ALLOWED.get(ext)
     if media_type is None:
-        raise ValidationError("仅支持图片附件（png / jpg / webp / gif）")
+        raise ValidationError("Only image attachments are supported (png / jpg / webp / gif)")
     data = await file.read()
     if len(data) > _MAX_MB * 1024 * 1024:
-        raise ValidationError(f"图片过大（上限 {_MAX_MB}MB）")
+        raise ValidationError(f"Image is too large (limit {_MAX_MB}MB)")
     attachment_id = f"{uuid.uuid4().hex}{ext}"
     with open(os.path.join(_dir(), attachment_id), "wb") as f:
         f.write(data)
@@ -67,6 +67,6 @@ async def get_file(
 ) -> FileResponse:
     path = attachment_path(attachment_id)
     if path is None:
-        raise NotFoundError("附件不存在")
+        raise NotFoundError("Attachment does not exist")
     ext = os.path.splitext(attachment_id)[1]
     return FileResponse(path, media_type=_ALLOWED.get(ext, "application/octet-stream"))

@@ -1,4 +1,4 @@
-"""Agent HTTP e2e（离线）：CRUD、信源绑定、会话、ask 守卫、绑定→信源解析。"""
+"""Agent HTTP e2e (offline): CRUD, source binding, threads, the ask guard, binding -> source resolution."""
 
 import httpx
 import pytest
@@ -21,23 +21,23 @@ async def test_agents_flow_offline():
             ).json()["access_token"]
             H = {"Authorization": f"Bearer {tok}"}
 
-            src = (await c.post("/api/v1/sources", headers=H, json={"name": "手册"})).json()
+            src = (await c.post("/api/v1/sources", headers=H, json={"name": "Manual"})).json()
             scoped_src = (
-                await c.post("/api/v1/sources", headers=H, json={"name": "临时范围"})
+                await c.post("/api/v1/sources", headers=H, json={"name": "Temporary scope"})
             ).json()
 
-            # 建 agent
+            # Create the agent
             r = await c.post(
                 "/api/v1/agents",
                 headers=H,
-                json={"name": "阿默", "avatar": "阿", "persona": {"system_prompt": "你是阿默。"}},
+                json={"name": "Amo", "avatar": "A", "persona": {"system_prompt": "You are Amo."}},
             )
             assert r.status_code == 201
             agent = r.json()
-            assert agent["name"] == "阿默"
+            assert agent["name"] == "Amo"
             aid = agent["id"]
 
-            # 绑定信源
+            # Bind the source
             b = await c.post(
                 f"/api/v1/agents/{aid}/bindings",
                 headers=H,
@@ -45,7 +45,7 @@ async def test_agents_flow_offline():
             )
             assert b.status_code == 201
             assert len((await c.get(f"/api/v1/agents/{aid}/bindings", headers=H)).json()) == 1
-            # 重复绑定 → 409
+            # A duplicate binding -> 409
             assert (
                 await c.post(
                     f"/api/v1/agents/{aid}/bindings",
@@ -54,7 +54,7 @@ async def test_agents_flow_offline():
                 )
             ).status_code == 409
 
-            # 绑定 → 信源解析
+            # Binding -> source resolution
             async with SessionLocal() as s:
                 agent_obj = await s.get(Agent, aid)
                 resolved = await resolve_sources(s, agent_obj)
@@ -62,15 +62,15 @@ async def test_agents_flow_offline():
             assert [x.id for x in resolved] == [src["id"]]
             assert [x.id for x in explicitly_scoped] == [scoped_src["id"]]
 
-            # 启动 run 前的配置错误使用标准 HTTP 错误，不伪装成 SSE run。
+            # A configuration error before the run starts uses a standard HTTP error rather than posing as an SSE run.
             th = (await c.post(f"/api/v1/agents/{aid}/threads", headers=H, json={})).json()
             ask = await c.post(
-                f"/api/v1/agents/{aid}/threads/{th['id']}/ask", headers=H, json={"query": "你好"}
+                f"/api/v1/agents/{aid}/threads/{th['id']}/ask", headers=H, json={"query": "hello"}
             )
             assert ask.status_code == 400
             assert ask.json()["error"]["code"] == "configuration_error"
 
-            # 列表 + 删除（共享测试库 → 用存在性断言而非精确计数）
+            # List + delete (a shared test database -> assert existence rather than an exact count)
             assert any(a["id"] == aid for a in (await c.get("/api/v1/agents", headers=H)).json())
             assert (await c.delete(f"/api/v1/agents/{aid}", headers=H)).status_code == 200
             assert not any(a["id"] == aid for a in (await c.get("/api/v1/agents", headers=H)).json())

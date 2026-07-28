@@ -1,4 +1,4 @@
-"""轻量日志配置 + 请求追踪中间件。"""
+"""Lightweight logging setup + request tracing middleware."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from starlette.types import ASGIApp
 
 _CONFIGURED = False
 
-# 当前请求的追踪 id，供日志与错误处理引用
+# Trace id of the current request, referenced by logs and error handling
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 
 
@@ -73,7 +73,7 @@ def configure_logging(level: str = "INFO") -> None:
     file_handler = _file_handler()
     if file_handler is not None:
         root.addHandler(file_handler)
-    # 降低第三方噪音，并禁止模型客户端在 DEBUG 模式输出完整提示词/正文。
+    # Turn down third-party noise, and stop model clients from dumping full prompts/bodies in DEBUG mode.
     for noisy in (
         "httpx",
         "httpcore",
@@ -94,7 +94,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 class _RequestIdFilter(logging.Filter):
-    """把当前请求 id 注入每条日志记录，未在请求上下文时为 '-'。"""
+    """Inject the current request id into every log record; '-' when outside a request context."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_var.get()
@@ -102,7 +102,7 @@ class _RequestIdFilter(logging.Filter):
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """为每个请求分配追踪 id：入站取 X-Request-Id 或新生成，出站回写响应头。"""
+    """Assign a trace id per request: read X-Request-Id inbound or mint one, and write it back on the response."""
 
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)

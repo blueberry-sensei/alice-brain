@@ -29,5 +29,5 @@ class Document(IDMixin, TimestampMixin, Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     token_usage: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # alicecore ingest 返回的 source_id（用于溯源）
+    # source_id returned by the alicecore ingest (used for provenance)
     sag_source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

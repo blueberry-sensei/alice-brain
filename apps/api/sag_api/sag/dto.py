@@ -1,4 +1,4 @@
-"""sag 侧的引擎结果 DTO —— 与 alicecore 的返回结构解耦。"""
+"""Engine result DTOs on the sag side - decoupled from alicecore's return shapes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class RetrievedSection(BaseModel):
-    """一个检索到的段落（用于问答上下文与引用）。"""
+    """One retrieved section (used as question-answering context and for citations)."""
 
     chunk_id: str | None = None
     heading: str = ""
@@ -33,7 +33,7 @@ class RetrievedSection(BaseModel):
 
 
 class SearchOutcome(BaseModel):
-    """检索结果聚合。"""
+    """Aggregated search result."""
 
     query: str
     sections: list[RetrievedSection]
@@ -53,7 +53,7 @@ class SearchOutcome(BaseModel):
 
 
 class ChunkInfo(BaseModel):
-    """一个分块的原文（引用溯源用）。"""
+    """The raw text of one chunk (for citation provenance)."""
 
     chunk_id: str
     heading: str = ""
@@ -62,17 +62,17 @@ class ChunkInfo(BaseModel):
 
 
 class EntityInfo(BaseModel):
-    """从事件—实体图谱聚合出的一个实体（用于洞察 / 书→人物）。"""
+    """An entity aggregated from the event-entity graph (used for insights / book -> character)."""
 
     id: str
     name: str
     type: str
     description: str = ""
-    heat: int = 0  # 关联事件数（频次 × 中心度的代理指标）
+    heat: int = 0  # number of related events (a proxy for frequency x centrality)
 
 
 class GraphEventInfo(BaseModel):
-    """信息源图谱中的事件节点。"""
+    """An event node in the source graph."""
 
     id: str
     source_id: str
@@ -89,7 +89,7 @@ class GraphEventInfo(BaseModel):
 
 
 class GraphAssociationInfo(BaseModel):
-    """事件与实体之间的真实抽取关系。"""
+    """A real extracted relation between an event and an entity."""
 
     event_id: str
     entity_id: str
@@ -98,7 +98,7 @@ class GraphAssociationInfo(BaseModel):
 
 
 class SourceGraphInfo(BaseModel):
-    """引擎侧图谱切片；Web 文档映射由 API 层补齐。"""
+    """A graph slice from the engine side; the API layer fills in the web document mapping."""
 
     events: list[GraphEventInfo] = []
     entities: list[EntityInfo] = []
@@ -174,7 +174,7 @@ class UniverseTimelineInfo(BaseModel):
 
 
 class ProcessOutcome(BaseModel):
-    """文档处理（ingest + extract）结果。"""
+    """The result of processing a document (ingest + extract)."""
 
     source_id: str | None = None
     chunk_count: int = 0
@@ -201,7 +201,7 @@ class ProcessOutcome(BaseModel):
 
 
 class ProcessCheckpoint(BaseModel):
-    """可持久化到 Job.payload 的文档处理断点。"""
+    """A document-processing checkpoint that can be persisted into Job.payload."""
 
     source_id: str | None = None
     chunk_ids: list[str] = []

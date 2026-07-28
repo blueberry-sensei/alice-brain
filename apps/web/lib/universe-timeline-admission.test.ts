@@ -9,9 +9,9 @@ function timelinePage(secondEntityCount = 1): UniverseTimelineSlice {
     id: "entity-shared",
     kind: "entity" as const,
     source_id: "source-a",
-    label: "共享实体",
+    label: "Shared entity",
     description: "",
-    category: "实体",
+    category: "Entity",
     chunk_id: null,
     start_time: null,
     importance: 0.5,
@@ -24,7 +24,7 @@ function timelinePage(secondEntityCount = 1): UniverseTimelineSlice {
     source_id: "source-a",
     label: id,
     description: "",
-    category: "事件",
+    category: "Event",
     chunk_id: null,
     start_time: "2026-07-14T00:00:00Z",
     importance: 0.8,
@@ -34,7 +34,7 @@ function timelinePage(secondEntityCount = 1): UniverseTimelineSlice {
   const secondEntities = Array.from({ length: secondEntityCount }, (_, index) => ({
     ...firstEntity,
     id: `entity-${index + 2}`,
-    label: `实体 ${index + 2}`,
+    label: `Entity ${index + 2}`,
   }));
   const bundles: UniverseTimelineSlice["bundles"] = [
     {

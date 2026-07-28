@@ -7,7 +7,7 @@ from sag_api.db.base import Base, IDMixin, TimestampMixin
 
 
 class Setting(IDMixin, TimestampMixin, Base):
-    """键值配置（预留：运行期可覆盖的全局 / 工作空间级设置）。"""
+    """Key-value configuration (reserved: global / workspace level settings overridable at runtime)."""
 
     __tablename__ = "settings"
     __table_args__ = (UniqueConstraint("scope", "key", name="uq_setting_scope_key"),)

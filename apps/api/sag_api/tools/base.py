@@ -1,9 +1,9 @@
-"""工具抽象 —— Agent 可挂载的能力单元。
+"""Tool abstraction - a capability unit an Agent can mount.
 
-设计对齐 `connectors/`：一个「工具」自描述（name + JSON-Schema 参数），
-经注册表登记；Agent 循环把工具 schema 交给 LLM（native function-calling），
-再把 LLM 的 tool_call 派发到对应工具执行。检索只是内置的其中一个工具，
-外部 MCP 工具适配成同一接口后与内置工具对 Agent 完全一致。
+The design mirrors `connectors/`: a "tool" describes itself (name + JSON-Schema parameters) and
+registers with the registry; the Agent loop hands the tool schemas to the LLM (native function-calling),
+then dispatches the LLM's tool_call to the matching tool. Retrieval is just one of the built-in tools,
+and an external MCP tool adapted to the same interface is indistinguishable from a built-in one to the Agent.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ToolMeta:
-    """工具自描述。`parameters` 为 JSON-Schema（object），供模型 function-calling。"""
+    """Tool self-description. `parameters` is a JSON-Schema (object) for the model's function-calling."""
 
     name: str
     description: str
@@ -38,19 +38,20 @@ class ToolMeta:
 
 @dataclass
 class ToolContext:
-    """工具执行所需的运行时上下文（由 Agent 循环注入，类比 job handler 的单例注入）。"""
+    """Runtime context a tool needs (injected by the Agent loop, mirroring how a job handler receives singletons)."""
 
     engine_manager: EngineManager
     sources: list[Source] = field(default_factory=list)
     persona: dict[str, Any] = field(default_factory=dict)
     agent: Agent | None = None
-    # 全局证据编号偏移：循环在每次派发前设置，保证 [n] 跨轮递增不重号
+    language: str = "en"
+    # Global evidence numbering offset: the loop sets it before each dispatch so [n] keeps increasing across rounds without reuse
     citation_offset: int = 0
 
 
 @dataclass
 class ToolResult:
-    """工具执行结果。`content` 回填给模型；`citations` 供 UI 溯源；`data` 结构化附带。"""
+    """Tool execution result. `content` goes back to the model; `citations` give the UI provenance; `data` carries structured extras."""
 
     content: str
     citations: list[dict] = field(default_factory=list)
@@ -58,11 +59,11 @@ class ToolResult:
 
 
 class Tool(ABC):
-    """所有工具的基类。新增工具 = 继承 + 实现 invoke + 在 registry 注册。"""
+    """Base class of every tool. Adding a tool = subclass + implement invoke + register it in the registry."""
 
     meta: ToolMeta
 
     @abstractmethod
     async def invoke(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-        """执行工具。参数已由模型给出（或自动播种），返回可回填的结果。"""
+        """Execute the tool. Arguments come from the model (or are auto-seeded); returns a result to feed back."""
         raise NotImplementedError

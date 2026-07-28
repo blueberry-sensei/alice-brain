@@ -109,16 +109,16 @@ class UniverseExpandIn(BaseModel):
     @model_validator(mode="after")
     def validate_time_window(self) -> UniverseExpandIn:
         if self.node_kind == "entity" and self.limit > 4:
-            raise ValueError("实体探索每页最多返回四个事件包")
+            raise ValueError("Entity exploration returns at most four event bundles per page")
         if self.cursor is not None and self.snapshot_id is None:
-            raise ValueError("邻域续页必须携带 snapshot_id")
+            raise ValueError("A neighbourhood continuation page must carry snapshot_id")
         if self.node_kind == "event" and (self.after is not None or self.before is not None):
-            raise ValueError("事件到实体的扩展不接受时间范围")
+            raise ValueError("Expanding from an event to entities does not accept a time range")
         if self.after is not None and self.before is not None:
             after = self.after.replace(tzinfo=UTC) if self.after.tzinfo is None else self.after
             before = self.before.replace(tzinfo=UTC) if self.before.tzinfo is None else self.before
             if after.astimezone(UTC) > before.astimezone(UTC):
-                raise ValueError("after 不能晚于 before")
+                raise ValueError("after cannot be later than before")
         return self
 
 
@@ -136,9 +136,9 @@ class UniverseTimelineIn(BaseModel):
     @model_validator(mode="after")
     def validate_snapshot(self) -> UniverseTimelineIn:
         if self.cursor is not None and self.snapshot_id is None:
-            raise ValueError("时间轴续页必须携带 snapshot_id")
+            raise ValueError("A timeline continuation page must carry snapshot_id")
         if self.direction == "newer" and self.cursor is None:
-            raise ValueError("向新时间轴续页必须携带 cursor")
+            raise ValueError("Continuing into a new timeline must carry a cursor")
         return self
 
 
@@ -171,11 +171,11 @@ class UniverseNeighborPageOut(BaseModel):
     @model_validator(mode="after")
     def validate_counts(self) -> UniverseNeighborPageOut:
         if self.returned_unique > self.total_unique:
-            raise ValueError("returned_unique 不能超过 total_unique")
+            raise ValueError("returned_unique cannot exceed total_unique")
         if self.complete != (self.returned_unique == self.total_unique):
-            raise ValueError("complete 与邻居计数不一致")
+            raise ValueError("complete disagrees with the neighbour count")
         if self.complete != (self.next_cursor is None):
-            raise ValueError("complete 与邻居续页游标不一致")
+            raise ValueError("complete disagrees with the neighbour continuation cursor")
         return self
 
 
@@ -208,26 +208,26 @@ class UniverseTimelineBundleOut(BaseModel):
     def validate_neighborhood(self) -> UniverseTimelineBundleOut:
         entity_ids = [node.id for node in self.nodes]
         if len(set(entity_ids)) != len(entity_ids):
-            raise ValueError("时间轴事件包包含重复实体")
+            raise ValueError("The timeline event bundle contains duplicate entities")
         entity_id_set = set(entity_ids)
         relation_keys = {(relation.from_id, relation.to_id) for relation in self.relations}
         if len(relation_keys) != len(self.relations):
-            raise ValueError("时间轴事件包包含重复关系")
+            raise ValueError("The timeline event bundle contains duplicate relations")
         if any(
             relation.source_id != self.event.source_id
             or relation.from_id != self.event.id
             or relation.to_id not in entity_id_set
             for relation in self.relations
         ):
-            raise ValueError("时间轴关系端点不属于当前事件包")
+            raise ValueError("A timeline relation endpoint does not belong to the current event bundle")
         if {relation.to_id for relation in self.relations} != entity_id_set:
-            raise ValueError("时间轴返回实体必须各有一条事实关系")
+            raise ValueError("Every entity the timeline returns must have exactly one factual relation")
         if any(node.source_id != self.event.source_id for node in self.nodes):
-            raise ValueError("时间轴事件包跨越了信息源")
+            raise ValueError("The timeline event bundle spans more than one source")
         if self.neighbor_page.returned_unique != len(entity_id_set):
-            raise ValueError("returned_unique 与返回实体数不一致")
+            raise ValueError("returned_unique disagrees with the number of entities returned")
         if self.event.related_count != self.neighbor_page.total_unique:
-            raise ValueError("事件关联总数与 neighbor_page 不一致")
+            raise ValueError("The total event relation count disagrees with neighbor_page")
         return self
 
 
@@ -246,14 +246,14 @@ class UniverseTimelinePageOut(BaseModel):
     @model_validator(mode="after")
     def validate_directional_cursors(self) -> UniverseTimelinePageOut:
         if self.has_newer != (self.newer_cursor is not None):
-            raise ValueError("has_newer 与 newer_cursor 不一致")
+            raise ValueError("has_newer disagrees with newer_cursor")
         if self.has_older != (self.older_cursor is not None):
-            raise ValueError("has_older 与 older_cursor 不一致")
+            raise ValueError("has_older disagrees with older_cursor")
         directional_cursor = self.older_cursor if self.direction == "older" else self.newer_cursor
         if self.has_more != (directional_cursor is not None):
-            raise ValueError("has_more 与请求方向的游标不一致")
+            raise ValueError("has_more disagrees with the cursor of the requested direction")
         if self.next_cursor != directional_cursor:
-            raise ValueError("next_cursor 与请求方向的游标不一致")
+            raise ValueError("next_cursor disagrees with the cursor of the requested direction")
         return self
 
 
@@ -279,44 +279,44 @@ class UniverseTimelineSliceOut(BaseModel):
         after_cursors = [bundle.cursor_after for bundle in self.bundles if bundle.cursor_after is not None]
         before_cursors = [bundle.cursor_before for bundle in self.bundles if bundle.cursor_before is not None]
         if len(set(bundle_ids)) != len(bundle_ids):
-            raise ValueError("时间轴页面包含重复事件包")
+            raise ValueError("The timeline page contains duplicate event bundles")
         if len(set(event_ids)) != len(event_ids):
-            raise ValueError("时间轴页面包含重复事件")
+            raise ValueError("The timeline page contains duplicate events")
         # Hydration may drop an event inside the page, so ordinals may skip;
         # they must still march strictly older within one page.
         ordinals = [bundle.ordinal for bundle in self.bundles]
         if any(later <= earlier for earlier, later in zip(ordinals, ordinals[1:], strict=False)):
-            raise ValueError("时间轴事件包序数必须严格递增")
+            raise ValueError("Timeline event bundle ordinals must strictly increase")
         if any(ordinal >= self.total_events for ordinal in ordinals):
-            raise ValueError("时间轴事件包序数超出来源总量")
+            raise ValueError("A timeline event bundle ordinal exceeds the source total")
         if len(set(after_cursors)) != len(after_cursors) or len(set(before_cursors)) != len(before_cursors):
-            raise ValueError("时间轴页面包含重复游标")
+            raise ValueError("The timeline page contains duplicate cursors")
         if any(bundle.event.source_id != self.source_id for bundle in self.bundles):
-            raise ValueError("时间轴页面跨越了信息源")
+            raise ValueError("The timeline page spans more than one source")
         unique_nodes = {(bundle.event.kind, bundle.event.id) for bundle in self.bundles}
         unique_nodes.update((node.kind, node.id) for bundle in self.bundles for node in bundle.nodes)
         relation_count = sum(len(bundle.relations) for bundle in self.bundles)
         if self.page.returned_bundles != len(self.bundles):
-            raise ValueError("returned_bundles 与事件包数不一致")
+            raise ValueError("returned_bundles disagrees with the number of event bundles")
         if self.page.returned_unique_nodes != len(unique_nodes):
-            raise ValueError("returned_unique_nodes 与节点数不一致")
+            raise ValueError("returned_unique_nodes disagrees with the number of nodes")
         if self.page.returned_relations != relation_count:
-            raise ValueError("returned_relations 与关系数不一致")
+            raise ValueError("returned_relations disagrees with the number of relations")
         if self.page.direction != self.request_direction:
-            raise ValueError("页面方向与请求方向不一致")
+            raise ValueError("The page direction disagrees with the requested direction")
         if self.page.has_more and not self.bundles:
-            raise ValueError("空页面不能声明 has_more")
+            raise ValueError("An empty page cannot claim has_more")
         if any(bundle.cursor_after is None for bundle in self.bundles[:-1]):
-            raise ValueError("非末尾事件包缺少 cursor_after")
+            raise ValueError("A non-trailing event bundle is missing cursor_after")
         if any(bundle.cursor_before is None for bundle in self.bundles[1:]):
-            raise ValueError("非首部事件包缺少 cursor_before")
+            raise ValueError("A non-leading event bundle is missing cursor_before")
         if self.bundles:
             if self.bundles[0].cursor_before != self.page.newer_cursor:
-                raise ValueError("首部事件包游标与 newer_cursor 不一致")
+                raise ValueError("The leading event bundle cursor disagrees with newer_cursor")
             if self.bundles[-1].cursor_after != self.page.older_cursor:
-                raise ValueError("末尾事件包游标与 older_cursor 不一致")
+                raise ValueError("The trailing event bundle cursor disagrees with older_cursor")
         if self.request_cursor is not None and self.request_cursor == self.page.next_cursor:
-            raise ValueError("时间轴游标没有前进")
+            raise ValueError("The timeline cursor did not advance")
         return self
 
 
@@ -338,12 +338,12 @@ class UniverseGraphPatchOut(BaseModel):
     @model_validator(mode="after")
     def validate_page_contract(self) -> UniverseGraphPatchOut:
         if self.anchor.source_id != self.source_id:
-            raise ValueError("探索锚点不属于当前信息源")
+            raise ValueError("The exploration anchor does not belong to the current source")
         node_ids = [node.id for node in self.nodes]
         if self.anchor.id in node_ids or len(set(node_ids)) != len(node_ids):
-            raise ValueError("探索页面包含重复节点")
+            raise ValueError("The exploration page contains duplicate nodes")
         if any(node.source_id != self.source_id for node in self.nodes):
-            raise ValueError("探索页面跨越了信息源")
+            raise ValueError("The exploration page spans more than one source")
 
         kinds_by_id = {self.anchor.id: self.anchor.kind}
         kinds_by_id.update((node.id, node.kind) for node in self.nodes)
@@ -352,14 +352,14 @@ class UniverseGraphPatchOut(BaseModel):
             for relation in self.relations
         ]
         if len(set(relation_keys)) != len(relation_keys):
-            raise ValueError("探索页面包含重复关系")
+            raise ValueError("The exploration page contains duplicate relations")
         if any(
             relation.source_id != self.source_id
             or kinds_by_id.get(relation.from_id) != "event"
             or kinds_by_id.get(relation.to_id) != "entity"
             for relation in self.relations
         ):
-            raise ValueError("探索关系端点不完整或方向错误")
+            raise ValueError("An exploration relation endpoint is incomplete or points the wrong way")
 
         connected_ids = {
             endpoint
@@ -367,12 +367,12 @@ class UniverseGraphPatchOut(BaseModel):
             for endpoint in (relation.from_id, relation.to_id)
         }
         if any(node.id not in connected_ids for node in self.nodes):
-            raise ValueError("探索页面包含没有事实关系的节点")
+            raise ValueError("The exploration page contains nodes with no factual relation")
         if self.anchor.kind == "event":
             if any(node.kind != "entity" for node in self.nodes):
-                raise ValueError("事件探索只能返回实体邻居")
+                raise ValueError("Event exploration can only return entity neighbours")
             if any(relation.from_id != self.anchor.id for relation in self.relations):
-                raise ValueError("事件探索关系必须来自锚点")
+                raise ValueError("An event exploration relation must come from the anchor")
             returned = len(self.nodes)
         else:
             event_ids = {node.id for node in self.nodes if node.kind == "event"}
@@ -384,21 +384,21 @@ class UniverseGraphPatchOut(BaseModel):
                 )
                 for event_id in event_ids
             ):
-                raise ValueError("实体探索返回的事件必须直连锚点")
+                raise ValueError("An event returned by entity exploration must connect directly to the anchor")
             returned = len(event_ids)
         if self.page.returned != returned:
-            raise ValueError("returned 与主邻居数不一致")
+            raise ValueError("returned disagrees with the primary neighbour count")
         if self.page.returned > self.anchor.related_count:
-            raise ValueError("returned 不能超过锚点关联总数")
+            raise ValueError("returned cannot exceed the anchor's total relation count")
         if self.page.has_more != (self.page.next_cursor is not None):
-            raise ValueError("has_more 与 next_cursor 不一致")
+            raise ValueError("has_more disagrees with next_cursor")
         if self.page.has_more and self.page.returned == 0:
-            raise ValueError("空探索页面不能声明 has_more")
+            raise ValueError("An empty exploration page cannot claim has_more")
         if (
             self.request_cursor is not None
             and self.request_cursor == self.page.next_cursor
         ):
-            raise ValueError("探索游标没有前进")
+            raise ValueError("The exploration cursor did not advance")
         return self
 
 

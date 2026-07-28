@@ -46,61 +46,78 @@ _KNOWLEDGE_TOOLS = ["search_context", "get_entity"]
 _WEB_TOOLS = ["web_search", "open_webpage"]
 _ALWAYS_TOOLS = ["get_time"]
 _TOOL_LABELS = {
-    "search_context": "检索知识库",
-    "get_entity": "查询实体",
-    "get_time": "查询时间",
-    "web_search": "联网搜索",
-    "open_webpage": "打开网页",
+    "vi": {
+        "search_context": "Tìm trong kho tri thức",
+        "get_entity": "Tra cứu thực thể",
+        "get_time": "Tra cứu thời gian",
+        "web_search": "Tìm trên web",
+        "open_webpage": "Mở trang web",
+    },
+    "en": {
+        "search_context": "Search knowledge",
+        "get_entity": "Look up entity",
+        "get_time": "Get time",
+        "web_search": "Search the web",
+        "open_webpage": "Open webpage",
+    },
 }
 
+# Ý định của người dùng được dò bằng tiếng Anh và tiếng Việt — hai ngôn ngữ app phục vụ.
+# Bản trước liệt kê thêm nhánh tiếng Trung (di sản upstream); đã bỏ cùng lượt dọn tiếng Trung.
 _DIRECT_INTENT = re.compile(
-    r"^(?:你好(?:呀|啊)?|您好(?:呀|啊)?|嗨|哈[啰罗喽]|hi|hello|hey|"
-    r"早上好|下午好|晚上好|在吗|你在吗|谢谢(?:你)?|感谢(?:你)?|多谢|"
-    r"再见|拜拜|你是谁(?:呀|啊)?|你叫什么(?:名字)?|who are you|"
-    r"what(?:'|’)s your name)[!！?？。,.，\s]*$",
+    r"^(?:hi|hello|hey|good (?:morning|afternoon|evening)|thanks?|thank you|bye|goodbye|"
+    r"who are you|what(?:'|’)s your name|"
+    r"chào|xin chào|chào bạn|cảm ơn|cám ơn|tạm biệt|bạn là ai|bạn tên (?:là )?gì)"
+    r"[!?.,\s]*$",
     re.IGNORECASE,
 )
 _DIRECT_RESPONSE_HINT = re.compile(
-    r"(?:翻译|改写|润色|续写|纠错|起名|写一首|写一段|生成文案|头脑风暴)"
-    r"|(?:总结|概括)(?:以下|这段|这篇|我提供的)",
+    r"(?:translate|rewrite|paraphrase|proofread|polish|continue writing|brainstorm|name (?:it|this)|"
+    r"write (?:a|an|me)|dịch|viết lại|diễn đạt lại|sửa lỗi|đặt tên|viết (?:một|giúp))"
+    r"|(?:summari[sz]e|tóm tắt)\s+(?:the following|this|below|đoạn|bài|nội dung)",
     re.IGNORECASE,
 )
 _CLARIFICATION_FIRST_INTENT = re.compile(
-    r"^(?:(?:请|帮我|麻烦你|能否|可以|please)\s*)?"
-    r"(?:分析|总结|介绍|推荐|比较|对比|规划|看看|说说|查一下|analyse|analyze|summarize|"
-    r"recommend|compare|plan)(?:一下)?[!！?？。,.，\s]*$"
-    r"|^(?:最近|现在|目前|这个|那个|昨天|上周|上个月|去年|过去(?:一段时间)?)?"
-    r"(?:怎么样|怎么办|如何)[!！?？。,.，\s]*$",
+    r"^(?:(?:please|help me|could you|can you|làm ơn|giúp (?:tôi|mình)|bạn có thể)\s*)?"
+    r"(?:analyse|analyze|summari[sz]e|introduce|recommend|compare|plan|review|"
+    r"phân tích|tóm tắt|giới thiệu|gợi ý|so sánh|lên kế hoạch|xem thử)"
+    r"[!?.,\s]*$"
+    r"|^(?:recently|now|currently|yesterday|last week|last month|last year|"
+    r"gần đây|hiện tại|hôm qua|tuần trước|tháng trước|năm ngoái)?\s*"
+    r"(?:how(?:'s| is| are)? (?:it|things)|what now|thế nào|ra sao|làm sao)[!?.,\s]*$",
     re.IGNORECASE,
 )
-_SIMPLE_ARITHMETIC = re.compile(r"^[\d\s+\-*/().=？?]+$")
+_SIMPLE_ARITHMETIC = re.compile(r"^[\d\s+\-*/().=?]+$")
 _TIME_INTENT = re.compile(
-    r"(?:现在|今天|当前).{0,6}(?:几点|时间|日期|星期)|(?:时区|timezone|what time|current time)",
+    r"(?:what|current|now|today).{0,6}(?:time|date|day)|(?:time ?zone|timezone|what time|current time)"
+    r"|(?:mấy giờ|bây giờ là|ngày mấy|hôm nay là|múi giờ)",
     re.IGNORECASE,
 )
 _RELATIVE_TIME_INTENT = re.compile(
-    r"(?:过去|近)\s*(?:[一二三四五六七八九十百两\d]+|几|数)\s*(?:天|日|周|星期|个?月|季度|年)"
-    r"|(?:昨天|前天|明天|后天|上周|本周|下周|上个?月|本月|下个?月|去年|今年|明年)"
-    r"|\b(?:yesterday|tomorrow)\b"
-    r"|\b(?:last|past|next)\s+(?:(?:\d+|one|two|three|several|few)\s+)?"
-    r"(?:days?|weeks?|months?|quarters?|years?)\b",
+    r"\b(?:yesterday|tomorrow|today)\b"
+    r"|\b(?:last|past|next|this)\s+(?:(?:\d+|one|two|three|several|few)\s+)?"
+    r"(?:days?|weeks?|months?|quarters?|years?)\b"
+    r"|(?:hôm qua|hôm nay|ngày mai|tuần (?:này|trước|sau)|tháng (?:này|trước|sau)|năm (?:nay|ngoái|sau))"
+    r"|(?:trong|trong vòng)\s+(?:\d+|vài|mấy)\s+(?:ngày|tuần|tháng|quý|năm)",
     re.IGNORECASE,
 )
 _TIME_SENSITIVE_INTENT = re.compile(
-    r"(?:最近|最新|近期|当前|现行|实时|截至|今日|今天|本周|本月|今年|刚刚|"
-    r"latest|recent|current|today|this (?:week|month|year)|as of)"
-    r".{0,40}(?:新闻|更新|版本|发布|价格|行情|天气|趋势|发展|政策|法规|赛程|日程|状态|变化|"
-    r"news|updates?|versions?|releases?|price|weather|trends?|policy|schedule|status|changes?)",
+    r"(?:latest|recent|current|today|this (?:week|month|year)|as of|just now|"
+    r"mới nhất|gần đây|hiện tại|hôm nay|tuần này|tháng này|năm nay|vừa xong)"
+    r".{0,40}(?:news|updates?|versions?|releases?|price|weather|trends?|policy|schedule|status|changes?|"
+    r"tin tức|cập nhật|phiên bản|phát hành|giá|thời tiết|xu hướng|chính sách|lịch|trạng thái|thay đổi)",
     re.IGNORECASE,
 )
 _EXPLICIT_RESEARCH_INTENT = re.compile(
-    r"(?:资料|知识库|文档|来源|引用|证据|数据|统计|研究|报告|调研|查找|搜索|检索|核实|"
-    r"sources?|citations?|evidence|data|statistics|research|report|find|search|look up|verify)",
+    r"(?:sources?|citations?|evidence|data|statistics|research|report|find|search|look up|verify|"
+    r"knowledge base|document|"
+    r"nguồn|trích dẫn|bằng chứng|dữ liệu|thống kê|nghiên cứu|báo cáo|tìm|tra cứu|kiểm chứng|"
+    r"kho tri thức|tài liệu)",
     re.IGNORECASE,
 )
 _RESEARCH_TOOL = re.compile(
     r"(?:search|find|query|browse|web|news|weather|price|knowledge|document|lookup|read|"
-    r"检索|搜索|查询|新闻|天气|行情|知识|文档|网页)",
+    r"tìm|tra|duyệt|tin tức|thời tiết|giá|tri thức|tài liệu|trang web)",
     re.IGNORECASE,
 )
 # Numeric knowledge markers are plain ``[n]``. A numeric Markdown link label
@@ -166,13 +183,16 @@ def _initial_tool_choice(
 def _append_current_scene(
     messages: list[dict[str, Any]],
     notes: list[str],
+    *,
+    language: str = "en",
 ) -> list[dict[str, Any]]:
     """Keep dynamic run context inside the single system role."""
 
     if not notes:
         return list(messages)
     result = [dict(message) for message in messages]
-    scene = "【当前场景】\n" + "\n".join(f"- {note}" for note in notes)
+    scene_title = "[Bối cảnh hiện tại]" if language == "vi" else "[Current context]"
+    scene = scene_title + "\n" + "\n".join(f"- {note}" for note in notes)
     for index, message in enumerate(result):
         if message.get("role") == "system":
             result[index] = {**message, "content": f"{message.get('content', '')}\n\n{scene}"}
@@ -343,7 +363,7 @@ def _enabled_tool_names(agent, *, has_sources: bool = False, knowledge_only: boo
     persona = agent.persona or {}
     names = persona.get("tools")
     configured = [name for name in names if isinstance(name, str)] if isinstance(names, list) else []
-    # 检索是信源挂载带来的基础能力，不应依赖 persona 中是否碰巧保存了 tools 字段。
+    # Retrieval is a base capability that comes with mounting a source; it must not depend on whether the persona happens to have saved a tools field.
     knowledge_tools = _KNOWLEDGE_TOOLS if has_sources or getattr(agent, "is_default", False) else []
     if knowledge_only:
         # Keep local, read-only system utilities available while excluding
@@ -352,7 +372,13 @@ def _enabled_tool_names(agent, *, has_sources: bool = False, knowledge_only: boo
     return list(dict.fromkeys([*_ALWAYS_TOOLS, *knowledge_tools, *_WEB_TOOLS, *configured]))
 
 
-def _adapt_tool(host_tool, host_context: HostToolContext, citations: list[dict]) -> AgentTool:
+def _adapt_tool(
+    host_tool,
+    host_context: HostToolContext,
+    citations: list[dict],
+    *,
+    language: str = "en",
+) -> AgentTool:
     async def execute(
         arguments: Mapping[str, Any],
         context,
@@ -486,7 +512,7 @@ def _adapt_tool(host_tool, host_context: HostToolContext, citations: list[dict])
     return AgentTool(
         spec=ToolSpec(
             name=name,
-            label=_TOOL_LABELS.get(name, name),
+            label=_TOOL_LABELS.get(language, _TOOL_LABELS["en"]).get(name, name),
             description=host_tool.meta.description,
             parameters=host_tool.meta.parameters,
             risk=ToolRisk.READ_ONLY,
@@ -536,11 +562,13 @@ async def generate_stream(
     async with session_factory() as session:
         sources = await resolve_sources(session, agent, plan.source_ids)
         mcp_specs = [] if knowledge_only else await resolve_mcp_specs(session, agent)
+    language = settings.sag_language if settings.sag_language in {"en", "vi"} else "en"
     host_context = HostToolContext(
         engine_manager=engine_manager,
         sources=sources,
         persona=agent.persona or {},
         agent=agent,
+        language=language,
     )
 
     try:
@@ -552,50 +580,101 @@ async def generate_stream(
             )
             host_tools = [tool_registry.get(name) for name in names if tool_registry.has(name)]
             host_tools.extend(mcp_bundle.tools)
-            tools = tuple(_adapt_tool(tool, host_context, citations) for tool in host_tools)
+            tools = tuple(
+                _adapt_tool(tool, host_context, citations, language=language)
+                for tool in host_tools
+            )
             scene_notes: list[str] = []
             if mcp_bundle.warnings:
-                unavailable = "、".join(warning.get("server", "MCP") for warning in mcp_bundle.warnings)
+                unavailable = ", ".join(
+                    warning.get("server", "MCP") for warning in mcp_bundle.warnings
+                )
                 scene_notes.append(
-                    f"部分挂载工具本轮不可用：{unavailable}。若当前任务依赖这些能力，"
-                    "必须明确说明暂时无法核验，不得用模型记忆替代实时或外部事实。"
+                    (
+                        f"Một số công cụ đã gắn không dùng được trong lượt này: {unavailable}. "
+                        "Nếu nhiệm vụ cần các khả năng đó, phải nói rõ phần chưa thể kiểm chứng; "
+                        "không dùng trí nhớ mô hình thay cho dữ kiện hiện thời hoặc bên ngoài."
+                    )
+                    if language == "vi"
+                    else (
+                        f"Some mounted tools are unavailable for this turn: {unavailable}. "
+                        "If the task depends on them, state what cannot be verified; do not replace "
+                        "current or external facts with model memory."
+                    )
                 )
             if knowledge_only:
                 offline_rule = (
-                    "本轮联网已关闭，只能使用已挂载的本地知识库和必要系统工具；"
-                    "不得调用或声称使用网页、MCP 或其他外部搜索。联网关闭不代表每轮都要检索；"
-                    "仅当回答依赖知识性事实时，必须先调用 search_context，只根据工具返回的原文证据"
-                    "回答并保留引用；"
-                    "证据不足时明确说明知识库中没有足够依据，不得使用模型自身知识补充。"
+                    "Lượt này đã tắt truy cập web; chỉ được dùng kho tri thức cục bộ đã gắn và "
+                    "các công cụ hệ thống cần thiết. Không gọi hoặc tuyên bố đã dùng web, MCP hay "
+                    "tìm kiếm bên ngoài. Chỉ khi câu trả lời phụ thuộc dữ kiện tri thức mới phải "
+                    "gọi search_context trước, trả lời từ nguyên văn công cụ và giữ trích dẫn. Nếu "
+                    "bằng chứng thiếu, nói rõ kho tri thức chưa đủ; không bổ sung từ kiến thức mô hình."
+                    if language == "vi"
+                    else "Web access is disabled for this turn. Use only mounted local knowledge and "
+                    "necessary system tools; do not call or claim to use the web, MCP, or external "
+                    "search. Retrieval is required only when the answer depends on knowledge facts: "
+                    "call search_context first, answer from its evidence, and preserve citations. "
+                    "If evidence is insufficient, say so and do not fill gaps from model knowledge."
                 )
                 if "search_context" not in names:
                     offline_rule = (
-                        "本轮联网已关闭，且当前 Agent 没有可检索的本地知识库；只允许使用必要系统工具。"
-                        "不得调用或声称使用网页、MCP、其他外部搜索或模型自身知识来补充知识性事实；"
-                        "问题依赖外部或知识库资料时，应明确说明当前没有可用依据。"
+                        "Lượt này đã tắt truy cập web và Agent không có kho tri thức cục bộ để tìm. "
+                        "Chỉ được dùng công cụ hệ thống cần thiết; không dùng web, MCP, tìm kiếm bên "
+                        "ngoài hay kiến thức mô hình để bổ sung dữ kiện. Nếu câu hỏi cần nguồn bên "
+                        "ngoài hoặc kho tri thức, hãy nói rõ hiện không có bằng chứng khả dụng."
+                        if language == "vi"
+                        else "Web access is disabled and this Agent has no searchable local knowledge. "
+                        "Use only necessary system tools; do not use the web, MCP, external search, or "
+                        "model knowledge to supply facts. If the question needs external or knowledge-base "
+                        "sources, state that no evidence is currently available."
                     )
                 scene_notes.append(offline_rule)
             elif WebSearchTool.configured():
                 scene_notes.append(
-                    "本轮联网已开启。凡回答依赖实时、最新或外部事实，必须调用 web_search 获取网页证据，"
-                    "并在结论附近保留可点击的 Markdown 来源链接；search_context 只用于用户的本地知识库，"
-                    "不得用它代替互联网搜索。需要最新信息时，查询中应包含绝对日期，并将 time_range 设为 "
-                    "day 或 week；搜索摘要不足以核验精确结论时，必须用 open_webpage 打开最相关的可信来源。"
-                    "web_search 或 open_webpage 已成功返回结果后，不得声称无法联网、无法访问实时信息或无法访问网页；"
-                    "如果结果不够新或不足以支持结论，只能明确说明本次搜索没有找到足以核验的结果，并说明证据日期，"
-                    "不得把证据不足描述成系统能力不足。"
+                    (
+                        "Lượt này đã bật web. Khi câu trả lời phụ thuộc dữ kiện hiện thời, mới nhất "
+                        "hoặc bên ngoài, phải gọi web_search và đặt liên kết Markdown có thể bấm gần "
+                        "kết luận. search_context chỉ dành cho kho tri thức cục bộ. Với thông tin mới "
+                        "nhất, dùng ngày tuyệt đối và time_range day hoặc week; nếu đoạn tóm tắt chưa "
+                        "đủ, mở nguồn đáng tin nhất bằng open_webpage. Sau khi công cụ trả kết quả, "
+                        "không được nói hệ thống không thể truy cập web; nếu bằng chứng chưa đủ, hãy "
+                        "nói lần tìm kiếm này chưa xác minh được và nêu ngày của bằng chứng."
+                    )
+                    if language == "vi"
+                    else "Web access is enabled for this turn. If the answer depends on current, latest, "
+                    "or external facts, call web_search and keep clickable Markdown sources near the "
+                    "claims. search_context is only for local knowledge. For latest information, use "
+                    "absolute dates and a day or week time_range; open the strongest relevant source "
+                    "with open_webpage when snippets are insufficient. After a tool succeeds, do not "
+                    "claim web access is unavailable; if evidence remains insufficient, say this search "
+                    "did not verify the claim and state the evidence date."
                 )
             if plan.source_ids and sources:
                 scene_notes.append(
-                    "用户已通过 @ 将本轮知识范围限定为："
-                    + "、".join(source.name for source in sources)
-                    + "。问题涉及资料时必须先调用 search_context，并只依据返回证据作答。"
+                    (
+                        "Người dùng đã giới hạn phạm vi tri thức của lượt này bằng @ vào: "
+                        if language == "vi"
+                        else "The user limited this turn's knowledge scope with @ to: "
+                    )
+                    + ", ".join(source.name for source in sources)
+                    + (
+                        ". Nếu câu hỏi liên quan dữ liệu, gọi search_context trước và chỉ trả lời từ bằng chứng."
+                        if language == "vi"
+                        else ". For questions about those materials, call search_context first and answer only from its evidence."
+                    )
                 )
-            run_messages = _append_current_scene(list(plan.messages), scene_notes)
+            run_messages = _append_current_scene(
+                list(plan.messages),
+                scene_notes,
+                language=language,
+            )
             # Freeze the actual initial input before the runtime appends model
             # output and tool-result messages. This is the only content the UI
             # may describe as the model's starting context.
-            frozen_prompt_preview = build_prompt_preview(run_messages)
+            frozen_prompt_preview = build_prompt_preview(
+                run_messages,
+                language=settings.sag_language,
+            )
             initial_tool_choice = _initial_tool_choice(
                 plan.query,
                 tools,
@@ -702,7 +781,7 @@ async def generate_stream(
                             "arguments": started.get("arguments") or {},
                             "ms": payload.get("duration_ms", 0),
                             "count": 0,
-                            "error": error.get("message", "工具执行失败"),
+                            "error": error.get("message", "Tool execution failed"),
                         }
                     )
                 elif (

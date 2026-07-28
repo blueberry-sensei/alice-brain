@@ -9,7 +9,7 @@ from sag_api.enums import ConnectorKind, SourceStatus, SourceType
 
 
 class Source(IDMixin, TimestampMixin, Base):
-    """信源 —— 与 alicecore 的一个数据源（source_config_id）一一对应。"""
+    """Source - maps one-to-one to an alicecore data source (source_config_id)."""
 
     __tablename__ = "sources"
 
@@ -22,9 +22,9 @@ class Source(IDMixin, TimestampMixin, Base):
         SAEnum(ConnectorKind, native_enum=False, length=32),
         default=ConnectorKind.FILE_UPLOAD,
     )
-    # alicecore 数据源标识（一实例一源）
+    # alicecore data source identifier (one instance per source)
     sag_source_config_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    # 连接器配置 + 引擎覆盖（如 per-source language / entity_types）
+    # Connector config + engine overrides (such as per-source language / entity_types)
     config: Mapped[dict] = mapped_column("config_json", JSON, default=dict)
     status: Mapped[SourceStatus] = mapped_column(
         SAEnum(SourceStatus, native_enum=False, length=16), default=SourceStatus.ACTIVE

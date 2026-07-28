@@ -1,9 +1,9 @@
-"""EngineManager —— 管理 alicecore `DataEngine` 的生命周期与调用。
+"""EngineManager - owns the lifecycle of and the calls into the alicecore `DataEngine`.
 
-每个信源（source_config_id）对应一个 `DataEngine` 实例（引擎「一实例一源」的语义）。
-引擎按需构造并缓存；每源一把锁串行化该源上的读写。生命周期读写闸门允许
-已构造引擎跨源并发；文档处理使用独立 loader/extractor 同源并发。创建、逐出或
-关闭引擎时会等待所有在途操作结束。
+Each source (source_config_id) maps to one `DataEngine` instance (the engine is "one instance per source").
+Engines are built on demand and cached; one lock per source serialises reads and writes on that source. The
+lifecycle read/write gate lets already-built engines run concurrently across sources; document processing uses
+separate loader/extractor instances to run concurrently within one source. Creating, evicting or closing an engine waits for every in-flight operation to finish.
 """
 
 from __future__ import annotations
@@ -317,20 +317,20 @@ class EngineManager:
             async with get_engine().begin() as connection:
                 await connection.run_sync(create_missing)
         except Exception:  # noqa: BLE001 - indexes are an optimization, never availability
-            log.exception("创建知识宇宙查询索引失败，继续使用现有索引")
+            log.exception("Failed to create the knowledge-universe query index, continuing with the existing one")
 
     def _effective_search_strategy(self, requested: str | None) -> str:
-        """只允许快速/精确两档，并兼容存量内部配置中的 atomic。"""
+        """Allow only the fast and precise tiers, staying compatible with atomic in legacy internal config."""
         raw = requested or self._settings.search_strategy
         strategy = normalize_search_strategy(raw)
         if strategy in SEARCH_STRATEGIES:
             if strategy != raw:
-                log.info("旧检索策略 %s 已按精确模式 multi 执行", raw)
+                log.info("Legacy retrieval strategy %s was run as precise mode multi", raw)
             return strategy
         fallback = normalize_search_strategy(self._settings.search_strategy)
         if fallback not in SEARCH_STRATEGIES:
             fallback = "vector"
-        log.warning("忽略不支持的检索策略 %s，改用 %s", raw, fallback)
+        log.warning("Ignoring unsupported retrieval strategy %s, using %s instead", raw, fallback)
         return fallback
 
     def _config_for(self, source: Source | None) -> Any:
@@ -381,8 +381,8 @@ class EngineManager:
         except SQLAlchemyError as error:
             from sag_api.core.errors import UpstreamError
 
-            log.exception("信源父记录初始化失败 source_config_id=%s", source_config_id)
-            raise UpstreamError("信源引擎初始化失败，请稍后重试") from error
+            log.exception("Failed to initialise the source parent record source_config_id=%s", source_config_id)
+            raise UpstreamError("Source engine failed to initialise, please retry shortly") from error
 
     async def _slot(self, source_config_id: str, source: Source | None = None) -> _Slot:
         slot = self._slots.get(source_config_id)
@@ -393,7 +393,7 @@ class EngineManager:
             slot = self._slots.get(source_config_id)
             if slot is None or slot.closing:
                 async with self._lifecycle_gate.write():
-                    log.info("构造引擎 source_config_id=%s", source_config_id)
+                    log.info("Building engine source_config_id=%s", source_config_id)
                     config = self._config_for(source)
                     engine = DataEngine(
                         config,
@@ -410,7 +410,7 @@ class EngineManager:
                             await engine.aclose()
                         except Exception:  # noqa: BLE001 - preserve provisioning error
                             log.exception(
-                                "初始化失败后的引擎关闭异常 source_config_id=%s",
+                                "Engine shutdown failed after a failed initialisation source_config_id=%s",
                                 source_config_id,
                             )
                         raise
@@ -442,9 +442,9 @@ class EngineManager:
                 return
 
     async def _evict_lru(self, *, keep: str) -> None:
-        """超过缓存上限时逐出最久未用、且当前空闲（未持锁）的引擎槽。
+        """Evict the least recently used engine slot that is currently idle (not holding its lock) once the cache cap is exceeded.
 
-        在 `_create_lock` 内调用。持锁中的槽跳过——正在服务的源不被打断。
+        Called inside `_create_lock`. Slots holding their lock are skipped - a source being served is never interrupted.
         """
         while len(self._slots) > self._cache_size:
             candidates = [
@@ -453,7 +453,7 @@ class EngineManager:
                 if scid != keep and not s.lock.locked() and s.concurrent_users == 0
             ]
             if not candidates:
-                break  # 其余都在忙，暂不逐出
+                break  # everything else is busy, evict nothing for now
             _, victim = min(candidates)
             slot = self._slots.pop(victim)
             slot.closing = True
@@ -461,13 +461,13 @@ class EngineManager:
                 await slot.idle.wait()
                 async with slot.lock:
                     await slot.engine.aclose()
-                log.info("LRU 逐出引擎 source_config_id=%s（缓存上限 %d）", victim, self._cache_size)
+                log.info("LRU evicted engine source_config_id=%s (cache cap %d)", victim, self._cache_size)
             except Exception as e:  # noqa: BLE001
-                log.warning("逐出引擎失败 %s: %s", victim, e)
+                log.warning("Failed to evict engine %s: %s", victim, e)
 
     @asynccontextmanager
     async def use(self, source_config_id: str, source: Source | None = None):
-        """取得该源的引擎并持有其锁（串行化本源上的操作）。"""
+        """Take this source's engine and hold its lock (serialises operations on this source)."""
         while True:
             slot = await self._slot(source_config_id, source)
             async with self._lifecycle_gate.read():
@@ -484,7 +484,7 @@ class EngineManager:
 
     @asynccontextmanager
     async def use_concurrently(self, source_config_id: str, source: Source | None = None):
-        """取得共享资源但不串行化文档处理；独立 loader/extractor 隔离可变状态。"""
+        """Take the shared resources without serialising document processing; separate loader/extractor instances isolate mutable state."""
         while True:
             slot = await self._slot(source_config_id, source)
             # Maintenance waiters must not hold the global lifecycle read gate;
@@ -508,7 +508,7 @@ class EngineManager:
                 return
 
     async def provision(self, source_config_id: str, source: Source | None = None) -> None:
-        """确保该源的引擎 schema 与父记录就绪（幂等）。"""
+        """Make sure this source's engine schema and parent record are ready (idempotent)."""
         await self._slot(source_config_id, source)
 
     async def delete_document_data(
@@ -518,7 +518,7 @@ class EngineManager:
         *,
         source: Source | None = None,
     ) -> None:
-        """删除一篇文档的块、事件、关系及孤立实体派生数据。"""
+        """Delete one document's chunks, events, relations and the derived data of orphaned entities."""
         from sag_api.sag.document_cleanup import delete_document_records
 
         while True:
@@ -545,7 +545,7 @@ class EngineManager:
                     slot.lock.release()
                 break
         log.info(
-            "文档派生数据已清理 source_config_id=%s document_source_id=%s chunks=%d events=%d relations=%d entities=%d",
+            "Document-derived data cleaned source_config_id=%s document_source_id=%s chunks=%d events=%d relations=%d entities=%d",
             source_config_id,
             document_source_id,
             len(deleted.chunk_ids),
@@ -567,7 +567,7 @@ class EngineManager:
         max_concurrency: int | None = None,
         document_title: str | None = None,
     ) -> ProcessOutcome:
-        """独立处理一篇文档；同源文档可并行，chunk 完成即保存断点。"""
+        """Process one document independently; documents of the same source may run in parallel and each finished chunk saves a checkpoint."""
 
         async def ignore_checkpoint(_checkpoint: ProcessCheckpoint) -> None:
             return None
@@ -603,7 +603,7 @@ class EngineManager:
         strategy: str,
         top_k: int,
     ) -> SearchOutcome:
-        """单次检索（带每源时限）。超时抛 asyncio.TimeoutError。"""
+        """A single search (with a per-source time limit). Raises asyncio.TimeoutError on timeout."""
         timeout = max(1.0, self._settings.search_source_timeout)
 
         async def run() -> Any:
@@ -625,10 +625,10 @@ class EngineManager:
         strategy: str | None = None,
         top_k: int | None = None,
     ) -> SearchOutcome:
-        """检索（韧性版）：精确模式超时/失败/空结果时回退快速模式。
+        """Search (resilient variant): falls back to fast mode when precise mode times out, fails or returns nothing.
 
-        精确模式的查询侧含 LLM 实体抽取（慢且可能失败重试）；事件向量层缺失的源也会空转。
-        回退把这类退化收敛为一次快速向量检索，可经 `search_fallback_vector=false` 关闭。
+        The query side of precise mode includes LLM entity extraction (slow, and it may fail and retry); sources whose event vector layer is missing also spin for nothing.
+        The fallback collapses those degenerate cases into one fast vector search, and can be turned off with `search_fallback_vector=false`.
         """
         strategy = self._effective_search_strategy(strategy)
         top_k = top_k or self._settings.search_top_k
@@ -636,12 +636,12 @@ class EngineManager:
             outcome = await self._search_raw(source_config_id, query, source=source, strategy=strategy, top_k=top_k)
             if outcome.sections or strategy == "vector" or not self._settings.search_fallback_vector:
                 return outcome
-            log.info("精确检索空结果，回退快速检索 source_config_id=%s", source_config_id)
+            log.info("Precise search returned nothing, falling back to fast search source_config_id=%s", source_config_id)
         except TimeoutError:
             if strategy == "vector" or not self._settings.search_fallback_vector:
                 raise
             log.warning(
-                "检索超时(%.0fs) 回退 vector source_config_id=%s strategy=%s",
+                "Search timed out (%.0fs), falling back to vector source_config_id=%s strategy=%s",
                 self._settings.search_source_timeout,
                 source_config_id,
                 strategy,
@@ -650,7 +650,7 @@ class EngineManager:
             if strategy == "vector" or not self._settings.search_fallback_vector:
                 raise
             log.warning(
-                "检索失败回退 vector source_config_id=%s strategy=%s err=%s",
+                "Search failed, falling back to vector source_config_id=%s strategy=%s err=%s",
                 source_config_id,
                 strategy,
                 getattr(e, "message", None) or e,
@@ -665,7 +665,7 @@ class EngineManager:
         strategy: str | None = None,
         top_k: int | None = None,
     ) -> SearchOutcome:
-        """在统一候选与并发边界内检索；单源失败不影响整体结果。"""
+        """Search within the shared candidate and concurrency bounds; one failing source does not spoil the overall result."""
         strategy = self._effective_search_strategy(strategy)
         top_k = top_k or self._settings.search_top_k
         per_source_k = max(top_k, 4)
@@ -686,7 +686,7 @@ class EngineManager:
                 # The lexical branch in ``retrieve_relevant_sections`` is already
                 # running in parallel. Return control to it instead of paying a
                 # second timeout in the legacy per-source vector path.
-                log.warning("批量块向量召回超时，保留并行词法结果")
+                log.warning("Batched chunk vector recall timed out, keeping the parallel lexical results")
                 return SearchOutcome(
                     query=query,
                     sections=[],
@@ -701,7 +701,7 @@ class EngineManager:
             except Exception as error:  # noqa: BLE001
                 # Keep the established per-source engine path as a compatibility
                 # fallback for storage providers that cannot do a filtered batch kNN.
-                log.warning("批量块向量召回失败，回退逐信源检索：%s", error)
+                log.warning("Batched chunk vector recall failed, falling back to per-source search: %s", error)
 
         semaphore = asyncio.Semaphore(self._settings.search_source_concurrency)
 
@@ -711,7 +711,7 @@ class EngineManager:
                     outcome = await self.search(scid, query, source=source, strategy=strategy, top_k=per_source_k)
                     return scid, outcome
                 except Exception as e:  # noqa: BLE001
-                    log.warning("fan-out 检索失败 %s：%s", scid, getattr(e, "message", None) or e)
+                    log.warning("Fan-out search failed %s: %s", scid, getattr(e, "message", None) or e)
                     return None
 
         results = await asyncio.gather(*(_one(scid, src) for scid, src in targets))
@@ -723,7 +723,7 @@ class EngineManager:
                 continue
             scid, outcome = result
             for sec in outcome.sections:
-                # 部分向量后端不会回填来源；跨源聚合时补齐，供 MCP/UI 正确标注。
+                # Some vector backends do not backfill the source; fill it in when aggregating across sources so MCP/UI can label it correctly.
                 if not sec.source_config_id:
                     sec.source_config_id = scid
                 if sec.chunk_id:
@@ -1071,7 +1071,7 @@ class EngineManager:
             )
             selected_direct_keys = {(row["source_config_id"], row["id"]) for row in direct_rows}
 
-            # 每个高相关分块先贡献一个事件，再进入下一轮，避免单个长分块占满结果。
+            # Every highly relevant chunk contributes one event first, then the next round starts, so a single long chunk cannot fill the result.
             ordered_chunk_keys = sorted(
                 chunk_scores,
                 key=lambda key: (-chunk_scores[key], key[0], key[1]),
@@ -1090,7 +1090,7 @@ class EngineManager:
                     break
                 depth += 1
 
-            # 重复上传或重叠分块会抽取出同名事件；同一信源只保留相关度最高的一条。
+            # A repeated upload or overlapping chunks extract events with the same name; only the most relevant one is kept per source.
             seen_titles: set[tuple[str, str]] = set()
             event_rows = []
             for row in [
@@ -1110,7 +1110,7 @@ class EngineManager:
                     id=row["id"],
                     source_config_id=row["source_config_id"],
                     source_id=row["source_id"],
-                    title=row["title"] or "未命名事件",
+                    title=row["title"] or "Untitled event",
                     summary=str(row["summary"] or "")[:800],
                     content=str(row["content"] or "")[:4000],
                     category=row["category"] or "",
@@ -1209,8 +1209,8 @@ class EngineManager:
         types: list[str] | None = None,
         limit: int = 100,
     ) -> list[EntityInfo]:
-        """读取该源的事件—实体图谱，按热度（关联事件数）排序。extract 后才有数据。"""
-        await self._slot(source_config_id, source)  # 确保引擎 / DB 已初始化
+        """Read this source's event-entity graph, ordered by heat (number of related events). Data exists only after extract."""
+        await self._slot(source_config_id, source)  # make sure the engine / DB is initialised
         from sqlalchemy import func, select
         from alicecore.db import get_session_factory
         from alicecore.db.models import Entity, EventEntity
@@ -1251,10 +1251,10 @@ class EngineManager:
         entity_limit: int = 1_000,
         expected_event_count: int | None = None,
     ) -> SourceGraphInfo:
-        """按展示预算读取一个按文档均衡的事件—实体图谱。
+        """Read a document-balanced event-entity graph within the display budget.
 
-        图谱只读取本次展示文档对应的引擎 source_id。事件使用窗口排名轮询各文档，
-        避免单篇长文占满配额；关联边覆盖优先并限制密度，避免高基数图谱拖垮浏览器。
+        The graph only reads the engine source_id of the documents shown this time. Events use a windowed rank that round-robins across documents,
+        so one long document cannot fill the quota; related edges favour coverage and cap density so a high-cardinality graph cannot bog the browser down.
         """
         await self._slot(source_config_id, source)
         from sqlalchemy import func, select, update
@@ -1272,8 +1272,8 @@ class EngineManager:
             )
             visible_event = SourceEvent.status.is_(None) | (SourceEvent.status != "DELETED")
 
-            # 旧版断点抽取逐块保存，上游却把每次保存都视为整篇替换，导致先前块被隐藏。
-            # 只有 Web 完成数能证明引擎中的全部事件属于本次抽取时才修复，避免恢复旧版本。
+            # Older checkpointed extraction saved chunk by chunk, while upstream treated every save as replacing the whole document, hiding earlier chunks.
+            # Only repair when the finished web count proves every event in the engine belongs to this extraction run, so an old version is never restored.
             if expected_event_count and expected_event_count > 0:
                 total_event_count, visible_event_count = (
                     await s.execute(
@@ -1294,13 +1294,13 @@ class EngineManager:
                     )
                     await s.commit()
                     log.warning(
-                        "已恢复分块抽取中被上游隐藏的事件 source_config_id=%s count=%d",
+                        "Restored events hidden by upstream during chunked extraction source_config_id=%s count=%d",
                         source_config_id,
                         int(repaired.rowcount or 0),
                     )
 
-            # 实体总量必须与当前文档范围一致；否则单文档筛选会把整个信源的
-            # 实体数当成分母，错误显示为“已截断”。
+            # The total entity count must match the current document scope; otherwise single-document filtering takes the whole source's
+            # entity count as the denominator and wrongly renders as "truncated".
             total_entities = int(
                 (
                     await s.execute(
@@ -1312,7 +1312,7 @@ class EngineManager:
                 or 0
             )
 
-            # 每个文档先取 rank 较小的事件，再在文档之间轮询，兼顾层级根节点与覆盖面。
+            # Each document takes its lower-rank events first, then documents are visited round-robin, balancing hierarchy roots against coverage.
             source_rank = (
                 func.row_number()
                 .over(
@@ -1357,7 +1357,7 @@ class EngineManager:
                     id=row["id"],
                     source_config_id=source_config_id,
                     source_id=row["source_id"],
-                    title=row["title"] or "未命名事件",
+                    title=row["title"] or "Untitled event",
                     summary=str(row["summary"] or "")[:800],
                     category=row["category"] or "",
                     rank=int(row["rank"] or 0),
@@ -1394,7 +1394,7 @@ class EngineManager:
                 )
             ).all()
 
-        # 热度在当前图谱切片中计算；优先保留跨事件出现的实体。
+        # Heat is computed within the current graph slice; entities appearing across events are kept first.
         heat: dict[str, int] = {}
         entity_rows: dict[str, tuple[str, str, str]] = {}
         for _event_id, entity_id, _weight, _description, name, kind, entity_description in association_rows:
@@ -1462,7 +1462,7 @@ class EngineManager:
         source: Source | None = None,
         limit: int = 20,
     ) -> list[str]:
-        """某实体关联事件的文本片段（用于生成人格）。"""
+        """Text snippets of the events related to an entity (used to generate a persona)."""
         await self._slot(source_config_id, source)
         from sqlalchemy import select
         from alicecore.db import get_session_factory
@@ -1540,7 +1540,7 @@ class EngineManager:
             )
             category_rows = []
             if categories:
-                category = func.coalesce(func.nullif(SourceEvent.category, ""), "未分类")
+                category = func.coalesce(func.nullif(SourceEvent.category, ""), "Uncategorized")
                 category_rows = (
                     await session.execute(
                         select(category, func.count(SourceEvent.id).label("count"))
@@ -1595,7 +1595,7 @@ class EngineManager:
             event_count=int(event_count or 0),
             entity_count=entity_count,
             relation_count=relation_count,
-            category_counts={str(label or "未分类"): int(count or 0) for label, count in category_rows},
+            category_counts={str(label or "Uncategorized"): int(count or 0) for label, count in category_rows},
             time_buckets=time_buckets,
         )
 
@@ -1735,9 +1735,9 @@ class EngineManager:
                 {
                     "id": entity_id,
                     "kind": "entity",
-                    "label": row.name or "未命名实体",
+                    "label": row.name or "Untitled entity",
                     "description": str(row.entity_description or "")[:800],
-                    "category": row.type or "实体",
+                    "category": row.type or "Entity",
                     "chunk_id": None,
                     "start_time": None,
                     "importance": max(
@@ -1762,9 +1762,9 @@ class EngineManager:
             {
                 "id": str(event["id"]),
                 "kind": "event",
-                "label": event.get("title") or "未命名事件",
+                "label": event.get("title") or "Untitled event",
                 "description": str(event.get("summary") or "")[:800],
-                "category": event.get("category") or "事件",
+                "category": event.get("category") or "Event",
                 "chunk_id": event.get("chunk_id"),
                 "start_time": _utc_time(event.get("start_time") or event.get("event_time")),
                 "importance": max(
@@ -2265,9 +2265,9 @@ class EngineManager:
                     anchor={
                         "id": anchor.id,
                         "kind": "event",
-                        "label": anchor.title or "未命名事件",
+                        "label": anchor.title or "Untitled event",
                         "description": str(anchor.summary or "")[:800],
-                        "category": anchor.category or "事件",
+                        "category": anchor.category or "Event",
                         "chunk_id": anchor.chunk_id,
                         "start_time": anchor.start_time,
                         "related_count": related_count,
@@ -2276,9 +2276,9 @@ class EngineManager:
                         {
                             "id": row.entity_id,
                             "kind": "entity",
-                            "label": row.name or "未命名实体",
+                            "label": row.name or "Untitled entity",
                             "description": str(row.entity_description or "")[:800],
-                            "category": row.type or "实体",
+                            "category": row.type or "Entity",
                             "weight": _weight(row.weight),
                             "related_count": entity_counts.get(str(row.entity_id), 0),
                             "relation_description": str(row.relation_description or "")[:240],
@@ -2473,9 +2473,9 @@ class EngineManager:
                 anchor={
                     "id": anchor.id,
                     "kind": "entity",
-                    "label": anchor.name or "未命名实体",
+                    "label": anchor.name or "Untitled entity",
                     "description": str(anchor.description or "")[:800],
-                    "category": anchor.type or "实体",
+                    "category": anchor.type or "Entity",
                     "related_count": related_count,
                 },
                 neighbors=[
@@ -2532,7 +2532,7 @@ class EngineManager:
                     "id": event.id,
                     "kind": "event",
                     "source_ref_id": event.source_id,
-                    "label": event.title or "未命名事件",
+                    "label": event.title or "Untitled event",
                     # summary is the compact graph-card copy; content is the
                     # extracted event detail shown after opening the node.
                     "description": (content or summary)[:4000],
@@ -2556,9 +2556,9 @@ class EngineManager:
             return {
                 "id": entity.id,
                 "kind": "entity",
-                "label": entity.name or "未命名实体",
+                "label": entity.name or "Untitled entity",
                 "description": str(entity.description or "")[:4000],
-                "category": entity.type or "实体",
+                "category": entity.type or "Entity",
             }
 
     async def list_chunk_headings(
@@ -2569,7 +2569,7 @@ class EngineManager:
         doc_sag_id: str | None = None,
         limit: int = 300,
     ) -> list[dict]:
-        """分块大纲：heading + rank（可限定单文档），供 MCP outline。"""
+        """Chunk outline: heading + rank (optionally scoped to one document), for the MCP outline tool."""
         await self._slot(source_config_id, source)
         from sqlalchemy import select
         from alicecore.db import get_session_factory
@@ -2596,7 +2596,7 @@ class EngineManager:
         *,
         source: Source | None = None,
     ) -> str | None:
-        """读取成功入库时保存的整篇 Markdown；不存在或内容为空时返回 None。"""
+        """Read the whole Markdown saved on a successful ingest; returns None when it is missing or empty."""
         await self._slot(source_config_id, source)
         from sqlalchemy import select
         from alicecore.db import get_session_factory
@@ -2620,7 +2620,7 @@ class EngineManager:
         source: Source | None = None,
         limit: int = 20,
     ) -> list[dict]:
-        """精确文本匹配（LIKE，大小写不敏感）：语义检索之外的确定性查找。"""
+        """Exact text match (LIKE, case insensitive): a deterministic lookup alongside semantic search."""
         await self._ensure_read_runtime({source_config_id: source})
         from sqlalchemy import select
         from alicecore.db import get_session_factory
@@ -2660,7 +2660,7 @@ class EngineManager:
             prefix = text[prefix_start:best]
             dates = list(
                 re.finditer(
-                    r"20\d{2}(?:年\d{1,2}月\d{1,2}日|[-/]\d{1,2}[-/]\d{1,2})",
+                    r"20\d{2}(?:\u5e74\d{1,2}\u6708\d{1,2}\u65e5|[-/]\d{1,2}[-/]\d{1,2})",
                     prefix,
                 )
             )
@@ -2693,7 +2693,7 @@ class EngineManager:
         *,
         source: Source | None = None,
     ):
-        """读取某分块的完整原文（引用/搜索溯源）。不存在返回 None。"""
+        """Read one chunk's full raw text (for citations / search provenance). Returns None when absent."""
         from sag_api.sag.dto import ChunkInfo
 
         await self._slot(source_config_id, source)
@@ -2721,7 +2721,7 @@ class EngineManager:
         )
 
     async def release(self, source_config_id: str) -> None:
-        """关闭并移除某源的引擎槽（信源删除时调用；幂等）。"""
+        """Close and remove a source's engine slot (called when a source is deleted; idempotent)."""
         async with self._create_lock:
             async with self._lifecycle_gate.write():
                 slot = self._slots.pop(source_config_id, None)
@@ -2730,13 +2730,13 @@ class EngineManager:
                 slot.closing = True
                 try:
                     await slot.idle.wait()
-                    async with slot.lock:  # 等待在途操作结束
+                    async with slot.lock:  # wait for in-flight operations to finish
                         await slot.engine.aclose()
                 except Exception as e:  # noqa: BLE001
-                    log.warning("释放引擎失败 %s: %s", source_config_id, e)
+                    log.warning("Failed to release engine %s: %s", source_config_id, e)
 
     async def aclose_all(self) -> None:
-        # 先标记并摘除，阻止新请求拿到即将关闭的槽；逐槽等待在途操作完成。
+        # Mark and detach first so new requests cannot grab a slot that is about to close; then wait per slot for in-flight work.
         async with self._create_lock:
             async with self._lifecycle_gate.write():
                 slots = list(self._slots.items())
@@ -2749,4 +2749,4 @@ class EngineManager:
                         async with slot.lock:
                             await slot.engine.aclose()
                     except Exception as e:  # noqa: BLE001
-                        log.warning("关闭引擎失败 %s: %s", scid, e)
+                        log.warning("Failed to close engine %s: %s", scid, e)

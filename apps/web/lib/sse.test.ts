@@ -30,13 +30,13 @@ describe("agent ask transport", () => {
     await streamAgentAsk(
       "agent-1",
       "thread-1",
-      { query: "测试", web_enabled: webEnabled },
+      { query: "test", web_enabled: webEnabled },
       vi.fn(),
     );
 
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({
-      query: "测试",
+      query: "test",
       web_enabled: webEnabled,
     });
   });

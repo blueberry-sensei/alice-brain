@@ -65,7 +65,7 @@ async def _owned_run(
         or metadata.get("agent_id") != agent.id
         or metadata.get("thread_id") != thread_id
     ):
-        raise NotFoundError("运行不存在或已结束")
+        raise NotFoundError("That run does not exist or has finished")
     return handle
 
 
@@ -92,7 +92,7 @@ async def get_default(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """默认 agent（get-or-create）：客户端主对话入口，知识库=全部信源。"""
+    """Default agent (get-or-create): the client's main conversation entry, knowledge base = every source."""
     return AgentOut.model_validate(await svc.get_default_agent(session))
 
 
@@ -125,10 +125,10 @@ async def delete_(
     session: AsyncSession = Depends(get_session),
 ):
     await svc.delete_agent(session, agent_id)
-    return Ok(detail="Agent 已删除")
+    return Ok(detail="Agent deleted")
 
 
-# ── 绑定（信源 / MCP）────────────────────────────────────────────────
+# -- Bindings (source / MCP) ----------------------------------------
 @router.get("/{agent_id}/bindings", response_model=list[BindingOut])
 async def list_bindings(
     agent_id: str,
@@ -162,10 +162,10 @@ async def remove_binding(
 ):
     agent = await svc.get_agent(session, agent_id)
     await svc.remove_binding(session, agent, binding_id)
-    return Ok(detail="已解绑")
+    return Ok(detail="Unbound")
 
 
-# ── 会话 ────────────────────────────────────────────────────────────
+# -- Threads --------------------------------------------------------
 @router.get("/{agent_id}/threads", response_model=list[ThreadOut])
 async def list_threads(
     agent_id: str,
@@ -247,7 +247,7 @@ async def delete_thread(
 ):
     agent = await svc.get_agent(session, agent_id)
     await svc.delete_thread(session, agent.id, thread_id)
-    return Ok(detail="会话已删除")
+    return Ok(detail="Thread deleted")
 
 
 @router.delete("/{agent_id}/threads/{thread_id}/messages/{message_id}", response_model=Ok)
@@ -260,7 +260,7 @@ async def delete_message(
 ):
     agent = await svc.get_agent(session, agent_id)
     await svc.delete_message(session, agent.id, thread_id, message_id)
-    return Ok(detail="已删除")
+    return Ok(detail="Deleted")
 
 
 @router.post("/{agent_id}/threads/{thread_id}/runs/{run_id}/cancel", response_model=Ok)
@@ -280,7 +280,7 @@ async def cancel_run(
         run_id=run_id,
     )
     handle.cancel()
-    return Ok(detail="已停止")
+    return Ok(detail="Stopped")
 
 
 @router.post(
@@ -304,8 +304,8 @@ async def approve_tool_call(
         run_id=run_id,
     )
     if not handle.approve(tool_call_id):
-        raise ConflictError("工具调用当前不等待审批")
-    return Ok(detail="已允许执行")
+        raise ConflictError("This tool call is not awaiting approval")
+    return Ok(detail="Execution allowed")
 
 
 @router.post(
@@ -330,8 +330,8 @@ async def reject_tool_call(
         run_id=run_id,
     )
     if not handle.reject(tool_call_id, body.reason):
-        raise ConflictError("工具调用当前不等待审批")
-    return Ok(detail="已拒绝执行")
+        raise ConflictError("This tool call is not awaiting approval")
+    return Ok(detail="Execution denied")
 
 
 @router.post("/{agent_id}/threads/{thread_id}/ask")
@@ -349,7 +349,7 @@ async def ask(
     agent = await svc.get_agent(session, agent_id)
     thread = await svc.get_thread(session, agent.id, thread_id)
     if not llm.configured:
-        raise ConfigurationError("尚未配置 LLM，无法生成回答")
+        raise ConfigurationError("No LLM configured yet, cannot generate an answer")
     plan = await svc.prepare_ask(
         session,
         agent=agent,
@@ -378,7 +378,7 @@ async def ask(
                 last = event
                 yield _sse(event.type, event.data)
         except Exception as e:  # noqa: BLE001
-            log.exception("ask 流异常终止：%s", e)
+            log.exception("The ask stream ended abnormally: %s", e)
             run_id = last.data.get("run_id", "") if last is not None else ""
             sequence = int(last.data.get("sequence", 0)) + 1 if last is not None else 0
             data = {
@@ -391,7 +391,7 @@ async def ask(
                 "payload": {
                     "error": {
                         "code": "stream_error",
-                        "message": f"生成中断：{getattr(e, 'message', None) or e}",
+                        "message": f"Generation interrupted: {getattr(e, 'message', None) or e}",
                         "retryable": True,
                         "details": {},
                     }

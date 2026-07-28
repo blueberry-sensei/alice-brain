@@ -1,4 +1,4 @@
-"""异步数据库引擎与会话。"""
+"""Async database engine and session."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from sag_api.db.base import Base
 
 
 def _ensure_sqlite_dir(url: str) -> None:
-    """SQLite 文件所在目录不存在时先创建。"""
+    """Create the directory holding the SQLite file when it does not exist yet."""
     marker = "sqlite+aiosqlite:///"
     if url.startswith(marker):
         path = url[len(marker) :]
@@ -35,7 +35,7 @@ engine: AsyncEngine = create_async_engine(
     pool_pre_ping=True,
 )
 
-# SQLite：外键约束 + 并发友好（WAL 读写并行，busy_timeout 让写入等待而非立即报锁）
+# SQLite: foreign keys on + concurrency friendly (WAL allows parallel read/write, busy_timeout makes writers wait instead of erroring)
 if settings.database_url.startswith("sqlite"):
 
     @event.listens_for(engine.sync_engine, "connect")
@@ -55,8 +55,8 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-# 已存在的表需要补的新列（dev 轻量增量迁移；生产用 Alembic）。
-# create_all 只建新表、不改旧表，故对演进列做幂等 ADD COLUMN。
+# New columns that existing tables still need (lightweight dev migration; production uses Alembic).
+# create_all only creates new tables and never alters old ones, so evolving columns get an idempotent ADD COLUMN.
 _COLUMN_UPGRADES: dict[str, dict[str, str]] = {
     "agents": {"is_default": "BOOLEAN NOT NULL DEFAULT 0"},
     "documents": {
@@ -107,7 +107,7 @@ async def _ensure_indexes() -> None:
 
 
 async def init_db() -> None:
-    """开发态建表（生产用 Alembic）。导入 models 以注册到 metadata。"""
+    """Create tables in development (production uses Alembic). Import models so they register on the metadata."""
     from sag_api.db import models  # noqa: F401
 
     async with engine.begin() as conn:

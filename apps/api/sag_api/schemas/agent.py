@@ -35,7 +35,7 @@ class AgentOut(BaseModel):
 class BindingCreate(BaseModel):
     target_type: BindingTargetType = BindingTargetType.SOURCE
     target_id: str = ""
-    config: dict[str, Any] = Field(default_factory=dict)  # MCP: url 或 command/args/env
+    config: dict[str, Any] = Field(default_factory=dict)  # MCP: url, or command/args/env
 
 
 class BindingOut(BaseModel):
@@ -48,7 +48,7 @@ class BindingOut(BaseModel):
 
 
 class ThreadCreate(BaseModel):
-    title: str = "新会话"
+    title: str = "New chat"
 
 
 class ThreadUpdate(BaseModel):
@@ -89,20 +89,20 @@ class MessagePageOut(BaseModel):
 
 class AskRequest(BaseModel):
     query: str = Field(default="", max_length=4000)
-    # 图片附件 id 列表（≤4，经 POST /attachments 上传）
+    # Image attachment ids (<=4, uploaded through POST /attachments)
     attachments: list[str] = Field(default_factory=list, max_length=4)
-    # @知识库 范围限定：仅在这些信源内检索（空=默认全部）
+    # @knowledge-base scope: search only within these sources (empty = every source)
     source_ids: list[str] = Field(default_factory=list, max_length=8)
-    # 联网能力由用户逐轮授权；默认关闭，开启后才暴露 Agent 配置的外部/MCP 工具。
+    # Web access is granted by the user per turn; off by default, and only then are the Agent's external/MCP tools exposed.
     web_enabled: bool = False
-    # 旧客户端兼容字段：knowledge_only=false 等价于 web_enabled=true。
-    # 新旧字段同时出现时，以语义更明确的 web_enabled 为准。
+    # Legacy client compatibility field: knowledge_only=false is equivalent to web_enabled=true.
+    # When both appear, the semantically clearer web_enabled wins.
     knowledge_only: bool | None = None
 
     @model_validator(mode="after")
     def require_text_or_attachment(self):
         if not self.query.strip() and not self.attachments:
-            raise ValueError("问题或图片至少提供一项")
+            raise ValueError("Provide at least one of a question or an image")
         return self
 
     @property
@@ -117,4 +117,4 @@ class AskRequest(BaseModel):
 
 
 class ToolRejection(BaseModel):
-    reason: str = Field(default="用户拒绝执行", max_length=500)
+    reason: str = Field(default="The user denied execution", max_length=500)

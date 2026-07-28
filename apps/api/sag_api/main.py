@@ -1,4 +1,4 @@
-"""sag-api 应用入口。"""
+"""sag-api application entry point."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from sag_api.sag.compat import install_engine_extract_compat
 log = get_logger("app")
 
 
-# 已知不安全的默认密钥（生产环境拒绝启动）
+# Known insecure default secret (production refuses to start)
 _INSECURE_SECRETS = {
     "dev-insecure-secret-change-me-in-production-0123456789",
     "please-change-this-in-production-0123456789",
@@ -41,26 +41,26 @@ async def lifespan(app: FastAPI):
     configure_logging("DEBUG" if settings.debug else "INFO")
     if settings.environment == "prod" and settings.secret_key in _INSECURE_SECRETS:
         raise RuntimeError(
-            "生产环境禁止使用默认 SAG_SECRET_KEY。请设置强随机值（≥32 字节），例如：openssl rand -hex 32"
+            "The default SAG_SECRET_KEY is not allowed in production. Set a strong random value (>=32 bytes), for example: openssl rand -hex 32"
         )
     os.makedirs(settings.data_dir, exist_ok=True)
     os.makedirs(settings.upload_dir, exist_ok=True)
 
     await init_db()
 
-    # 把 DB 里保存的模型配置覆盖到 settings 单例（在构建 LLM/引擎之前）
+    # Apply the model configuration stored in the DB onto the settings singleton (before building the LLM/engine)
     from sag_api.services.settings_service import apply_startup_overrides
 
     await apply_startup_overrides(SessionLocal)
 
-    # 播种默认 agent（开箱即用的主对话入口；幂等）
+    # Seed the default agent (the out-of-the-box main conversation entry; idempotent)
     from sag_api.services.agent_domain import get_default_agent
 
     async with SessionLocal() as _session:
         await get_default_agent(_session)
 
-    # alicecore 内部也调用 LiteLLM；全局 pre-call policy 让它与 Muse 生成链
-    # 共享相同的 provider 参数，而不修改依赖包。
+    # alicecore calls LiteLLM internally too; a global pre-call policy makes it share the same provider
+    # parameters as the Muse generation chain without patching the dependency.
     install_engine_extract_compat()
     litellm_policy = install_litellm_policy(settings)
     # Engine tự chuyển provider khi trích xuất; hứng log của nó về cùng một chỗ với đường
@@ -75,25 +75,25 @@ async def lifespan(app: FastAPI):
     )
     await app.state.job_queue.start()
 
-    # 后台预热最近使用的信源引擎（不阻塞启动；失败不影响服务）
+    # Warm up recently used source engines in the background (does not block startup; a failure does not affect service)
     warmup_task = asyncio.create_task(_warmup_engines(app.state.engine_manager))
 
     log.info(
-        "sag-api 已启动 · env=%s · llm_configured=%s · vector=%s",
+        "sag-api started - env=%s - llm_configured=%s - vector=%s",
         settings.environment,
         settings.llm_configured,
         settings.sag_vector_provider,
     )
     source_mcp = getattr(app.state, "source_mcp", None)
     try:
-        # MCP 端点的会话管理器需在 lifespan 内运行；失败仅关闭 /mcp，不影响其余服务
+        # The MCP endpoint's session manager must run inside the lifespan; a failure only disables /mcp and leaves the rest running
         async with AsyncExitStack() as stack:
             if source_mcp is not None:
                 try:
                     await stack.enter_async_context(source_mcp.session_manager.run())
-                    log.info("MCP 端点已就绪 · /mcp/（全库）· 可选 ?source_id=<信源 id>")
+                    log.info("MCP endpoint ready - /mcp/ (whole library) - optional ?source_id=<source id>")
                 except Exception as e:  # noqa: BLE001
-                    log.warning("MCP 会话管理器启动失败（/mcp 不可用）：%s", e)
+                    log.warning("MCP session manager failed to start (/mcp unavailable): %s", e)
             yield
     finally:
         try:
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
 
 
 async def _warmup_engines(engine_manager: EngineManager) -> None:
-    """预热最近更新的信源引擎，缩短用户首个操作的等待。"""
+    """Warm up the most recently updated source engines to shorten the wait on the user's first action."""
     if settings.engine_warmup_count <= 0:
         return
     try:
@@ -132,20 +132,20 @@ async def _warmup_engines(engine_manager: EngineManager) -> None:
             try:
                 await engine_manager.provision(source.sag_source_config_id, source)
             except Exception as e:  # noqa: BLE001
-                log.warning("预热引擎失败 source=%s: %s", source.id, e)
+                log.warning("Engine warm-up failed source=%s: %s", source.id, e)
         if rows:
-            log.info("已预热 %d 个信源引擎", len(rows))
+            log.info("Warmed up %d source engines", len(rows))
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
-        log.warning("引擎预热任务异常：%s", e)
+        log.warning("Engine warm-up task raised: %s", e)
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title=f"{PRODUCT_NAME} API",
         version=__version__,
-        summary="开源知识库平台 · 从信息源到知识问答",
+        summary="Open-source knowledge base platform - from information sources to knowledge Q&A",
         lifespan=lifespan,
     )
 
@@ -156,7 +156,7 @@ def create_app() -> FastAPI:
         "allow_headers": ["*"],
         "expose_headers": ["X-Request-Id"],
     }
-    # 开发环境放行局域网前端（如 http://192.168.x.x:3000），避免本机 IP 访问时 CORS 拦截
+    # In development, allow a LAN frontend (for example http://192.168.x.x:3000) so CORS does not block access by machine IP
     if settings.environment == "dev":
         cors_kwargs["allow_origin_regex"] = (
             r"https?://("
@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
             r")(:\d+)?"
         )
     app.add_middleware(CORSMiddleware, **cors_kwargs)
-    # 请求追踪（放在 CORS 之后添加 → 更外层执行，最先分配 request_id）
+    # Request tracing (added after CORS -> runs further out, so it assigns request_id first)
     app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(ApiError)
@@ -180,22 +180,22 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(_request: Request, exc: Exception) -> JSONResponse:
-        log.exception("未处理异常：%s", exc)
+        log.exception("Unhandled exception: %s", exc)
         return JSONResponse(
             status_code=500,
-            content={"error": {"code": "internal_error", "message": "服务器内部错误"}},
+            content={"error": {"code": "internal_error", "message": "Internal server error"}},
         )
 
     app.include_router(api_router)
 
-    # 信源即 MCP：挂载 Streamable-HTTP 端点（失败不阻断应用启动）
+    # A source is an MCP endpoint: mount the Streamable-HTTP endpoint (a failure does not block startup)
     try:
         from sag_api.mcp.mount import attach_source_mcp
 
         app.state.source_mcp = attach_source_mcp(app)
     except Exception as e:  # noqa: BLE001
         app.state.source_mcp = None
-        log.warning("MCP 端点挂载失败：%s", e)
+        log.warning("Failed to mount the MCP endpoint: %s", e)
 
     @app.get("/", tags=["system"])
     async def root() -> dict:

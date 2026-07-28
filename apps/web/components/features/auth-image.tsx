@@ -7,10 +7,10 @@ import { api } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-// 附件需带 Bearer 访问：blob URL 会话级缓存（图片数量有限，不主动回收）
+// Attachments need a Bearer request: blob URLs are cached per session (there are few images, so nothing is reclaimed eagerly)
 const cache = new Map<string, string>();
 
-/** 鉴权图片 —— 本地预览用 url 直渲；服务端附件按 id 经 Bearer 拉取为 blob。 */
+/** Authenticated image - a local preview renders the url directly; a server attachment is fetched by id with Bearer as a blob. */
 export function AuthImage({
   id,
   url,

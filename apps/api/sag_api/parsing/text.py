@@ -1,8 +1,8 @@
-"""文本文件编码识别与 UTF-8 规范化。
+"""Text file encoding detection and UTF-8 normalisation.
 
-浏览器 ``Response.text()`` 和 alicecore 的 Markdown loader 都以 UTF-8 为边界；
-上传文件本身则可能来自 GBK/GB18030、Big5、Shift-JIS 或 Windows-1252。
-这里保留原始字节，只为解析与预览生成可靠的 Unicode 文本。
+Both the browser's ``Response.text()`` and alicecore's Markdown loader treat UTF-8 as the boundary,
+while an uploaded file may arrive as GBK/GB18030, Big5, Shift-JIS or Windows-1252.
+This module keeps the original bytes and only produces reliable Unicode text for parsing and preview.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ _TEXT_APPLICATION_TYPES = {
 
 
 class TextDecodingError(ValueError):
-    """文件字节无法被可靠地识别为文本。"""
+    """The file bytes could not be reliably identified as text."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +138,7 @@ def decode_text_bytes(data: bytes) -> DecodedText:
             continue
         return decoded
 
-    raise TextDecodingError("无法可靠识别文本编码")
+    raise TextDecodingError("Could not reliably detect the text encoding")
 
 
 def _bom_encoding(data: bytes) -> str | None:
@@ -160,7 +160,7 @@ def _decode_candidate(data: bytes, encoding: str, *, strict: bool) -> DecodedTex
     try:
         text = data.decode(encoding, errors=errors)
     except UnicodeDecodeError as error:
-        raise TextDecodingError(f"文本不是有效的 {encoding} 编码") from error
+        raise TextDecodingError(f"The text is not valid {encoding}") from error
     _assert_text_quality(text)
     return DecodedText(text, encoding, text.count("�"))
 
@@ -169,16 +169,16 @@ def _assert_text_quality(text: str) -> None:
     if not text:
         return
     if "\x00" in text:
-        raise TextDecodingError("文件包含 NUL 字节，不像文本")
+        raise TextDecodingError("The file contains NUL bytes, it does not look like text")
     controls = sum(
         1
         for char in text
         if char not in "\t\n\r" and unicodedata.category(char) in {"Cc", "Cs"}
     )
     if controls > max(2, len(text) // 100):
-        raise TextDecodingError("文件包含过多控制字符，不像文本")
+        raise TextDecodingError("The file contains too many control characters, it does not look like text")
     if text.count("�") > max(8, len(text) // 100):
-        raise TextDecodingError("文本解码损坏比例过高")
+        raise TextDecodingError("Too much of the text decoded to replacement characters")
 
 
 def _east_asian_count(text: str) -> int:

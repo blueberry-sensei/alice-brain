@@ -4,7 +4,6 @@ import { LogOut } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { useApp } from "@/components/features/app-shell";
-import { ArchivedThreadsCard } from "@/components/features/archived-threads-card";
 import { SettingsRow, SettingsSection } from "@/components/features/settings-section";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -51,7 +50,6 @@ export function AccountSettings() {
         </SettingsRow>
       </SettingsSection>
 
-      <ArchivedThreadsCard />
     </div>
   );
 }

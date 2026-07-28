@@ -1,4 +1,4 @@
-"""洞察领域逻辑：事件—实体图谱读取（供未来图谱视图与 get_entity 工具）。"""
+"""Insight domain logic: reading the event-entity graph (for the future graph view and the get_entity tool)."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ async def get_source_graph(
     entity_limit: int = 1_000,
     document_ids: list[str] | None = None,
 ) -> SourceGraphOut:
-    """拼装 Web 文档与引擎事件/实体，按调用方给出的性能预算返回图谱。"""
+    """Join web documents with engine events/entities and return the graph within the performance budget the caller gives."""
     scoped_document_ids = (
         list(dict.fromkeys(document_id.strip() for document_id in document_ids if document_id.strip()))
         if document_ids is not None

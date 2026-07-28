@@ -1,3 +1,3 @@
-"""sag-api — 开源知识库平台后端。"""
+"""sag-api - the backend of the open-source knowledge base platform."""
 
 __version__ = "1.4.0"

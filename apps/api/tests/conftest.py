@@ -1,4 +1,4 @@
-"""测试夹具：在导入 sag_api 之前把配置指向临时目录（settings 为进程级单例）。"""
+"""Test fixtures: point the configuration at a temporary directory before sag_api is imported (settings is a process-level singleton)."""
 
 import os
 import sys
@@ -12,7 +12,7 @@ os.environ.setdefault("SAG_DATA_DIR", f"{_TMP}/sag")
 os.environ.setdefault("SAG_UPLOAD_DIR", f"{_TMP}/uploads")
 os.environ.setdefault("SAG_DEBUG", "false")
 os.environ.setdefault("SAG_SAG_LANGUAGE", "en")
-# 强制离线：即使存在带真实 key 的 .env，也保证测试确定性（不发起 LLM 调用）
+# Force offline: even when a .env with a real key exists, the tests stay deterministic (no LLM call is made)
 os.environ["SAG_LLM_API_KEY"] = ""
 os.environ["SAG_LLM_BASE_URL"] = ""
 os.environ["SAG_EMBEDDING_API_KEY"] = ""

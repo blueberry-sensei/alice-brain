@@ -9,7 +9,7 @@ export function middleware(req: NextRequest) {
 
   if (pathname === "/") {
     const url = req.nextUrl.clone();
-    url.pathname = token ? "/chat" : "/login";
+    url.pathname = token ? "/search" : "/login";
     return NextResponse.redirect(url);
   }
 
@@ -22,7 +22,7 @@ export function middleware(req: NextRequest) {
   }
   if (token && isPublic) {
     const url = req.nextUrl.clone();
-    url.pathname = "/chat";
+    url.pathname = "/search";
     return NextResponse.redirect(url);
   }
   return NextResponse.next();
