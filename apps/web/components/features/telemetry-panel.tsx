@@ -195,14 +195,26 @@ function AgentEventList({
       <ul className="divide-y">
         {events.map((event) => {
           const detail = event.detail as { preview?: string; status?: string; note?: string };
+          const kind =
+            event.kind === "delegation"
+              ? "delegation"
+              : event.kind === "sub_agent_registry"
+                ? "registry"
+                : "knowledge";
           return (
             <li key={event.id} className="flex flex-col gap-1 p-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <Badge
-                  variant={event.kind === "delegation" ? "default" : "outline"}
+                  variant={
+                    event.kind === "delegation"
+                      ? "default"
+                      : event.kind === "sub_agent_registry"
+                        ? "secondary"
+                        : "outline"
+                  }
                   className="text-xs"
                 >
-                  {event.kind === "delegation" ? t("kind.delegation") : t("kind.knowledge")}
+                  {t(`kind.${kind}`)}
                 </Badge>
                 <span className="font-medium">{event.tool || "—"}</span>
                 <span className="text-muted-foreground text-xs">

@@ -503,7 +503,7 @@
   },
   "SubAgentConfig": {
     "title": "Sub-agent providers",
-    "description": "The five built-in providers only show models returned by the live API after the key is verified. Custom provider keeps manual model entry.",
+    "description": "The five built-in providers only show models returned by the live API after the key is verified. Enabled slots can be called through the Brain MCP ask_sub_agent tool; Custom provider keeps manual model entry.",
     "loadFailed": "Unable to load sub-agent settings",
     "loadErrorTitle": "Failed to load",
     "retry": "Retry",
@@ -511,7 +511,7 @@
     "saveFailed": "Failed to save sub-agent settings",
     "save": "Save sub-agents",
     "saving": "Saving…",
-    "saveHint": "Credentials are encrypted at rest and are never returned by the API.",
+    "saveHint": "Credentials are encrypted at rest, used only inside Brain for provider calls, and never returned by the API or MCP.",
     "enabledAria": "Enable {provider}",
     "credentialStored": "Credential saved",
     "modelsLive": "Live models",
@@ -1256,7 +1256,8 @@
     },
     "kind": {
       "knowledge": "Knowledge",
-      "delegation": "Delegation"
+      "delegation": "Delegation",
+      "registry": "Sub-agent registry"
     }
   }
 }

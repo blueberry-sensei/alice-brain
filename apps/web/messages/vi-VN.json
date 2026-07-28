@@ -503,7 +503,7 @@
   },
   "SubAgentConfig": {
     "title": "Provider cho sub-agent",
-    "description": "Năm provider mặc định chỉ hiện model do API thật trả về sau khi key được xác thực. Riêng Custom provider nhập model thủ công.",
+    "description": "Năm provider mặc định chỉ hiện model do API thật trả về sau khi key được xác thực. Slot đã bật có thể được gọi qua tool MCP ask_sub_agent của Brain; riêng Custom provider nhập model thủ công.",
     "loadFailed": "Không tải được cấu hình sub-agent",
     "loadErrorTitle": "Tải cấu hình thất bại",
     "retry": "Thử lại",
@@ -511,7 +511,7 @@
     "saveFailed": "Không lưu được cấu hình sub-agent",
     "save": "Lưu sub-agent",
     "saving": "Đang lưu…",
-    "saveHint": "Credential được mã hóa khi lưu và API không bao giờ trả lại.",
+    "saveHint": "Credential được mã hóa, chỉ dùng bên trong Brain để gọi provider, và không bao giờ bị trả qua API hay MCP.",
     "enabledAria": "Bật {provider}",
     "credentialStored": "Đã lưu credential",
     "modelsLive": "Model live",
@@ -1256,7 +1256,8 @@
     },
     "kind": {
       "knowledge": "Tri thức",
-      "delegation": "Giao việc"
+      "delegation": "Giao việc",
+      "registry": "Registry sub-agent"
     }
   }
 }

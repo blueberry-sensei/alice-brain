@@ -214,13 +214,48 @@ async def test_telemetry_endpoints_require_authentication():
 
 
 @pytest.mark.asyncio
-async def test_knowledge_calls_and_delegation_are_logged():
-    """Gọi tool qua MCP để lại bản ghi 'agent lấy tri thức gì', và tool log ghi được việc đã giao."""
+async def test_knowledge_calls_and_delegation_are_logged(monkeypatch):
+    """MCP ghi được retrieval, registry, delegation tự động và lượt CLI do agent khai."""
     from sqlalchemy import select
 
     from sag_api.core.db import SessionLocal
     from sag_api.db.models import Source
     from sag_api.main import app
+    from sag_api.services import sub_agent_execution
+
+    async def fake_list(_session):
+        return [
+            {
+                "provider": "opencode-zen",
+                "display_name": "OpenCode ZEN",
+                "provider_name": "",
+                "model": "opencode/deepseek-v4-flash-free",
+                "credential_set": True,
+                "model_verified": True,
+                "callable": True,
+                "error": None,
+            }
+        ]
+
+    async def fake_invoke(_session, provider, task, *, context="", actor="unknown"):
+        assert (provider, task, context, actor) == (
+            "opencode-zen",
+            "review the auth boundary",
+            "source excerpt",
+            "claude-code",
+        )
+        return sub_agent_execution.SubAgentResult(
+            provider=provider,
+            display_name="OpenCode ZEN",
+            model="opencode/deepseek-v4-flash-free",
+            content="Keep ownership server-trusted.",
+            input_tokens=18,
+            output_tokens=6,
+            total_tokens=24,
+        )
+
+    monkeypatch.setattr(sub_agent_execution, "list_available_sub_agents", fake_list)
+    monkeypatch.setattr(sub_agent_execution, "invoke_sub_agent", fake_invoke)
 
     transport = httpx.ASGITransport(app=app)
     async with app.router.lifespan_context(app):
@@ -239,6 +274,15 @@ async def test_knowledge_calls_and_delegation_are_logged():
                 async with connect(mcp) as mcp_client:
                     await mcp_client.initialize()
                     await mcp_client.call_tool("list_sources", {})
+                    await mcp_client.call_tool("list_sub_agents", {})
+                    await mcp_client.call_tool(
+                        "ask_sub_agent",
+                        {
+                            "provider": "opencode-zen",
+                            "task": "review the auth boundary",
+                            "context": "source excerpt",
+                        },
+                    )
                     await mcp_client.call_tool(
                         "log_agent_task",
                         {
@@ -251,7 +295,7 @@ async def test_knowledge_calls_and_delegation_are_logged():
 
             events = (await client.get("/api/v1/telemetry/agent-events", headers=headers)).json()
             kinds = {item["kind"] for item in events["items"]}
-            assert {"knowledge_call", "delegation"} <= kinds
+            assert {"knowledge_call", "sub_agent_registry", "delegation"} <= kinds
 
             knowledge = next(item for item in events["items"] if item["kind"] == "knowledge_call")
             assert knowledge["tool"] == "list_sources"
@@ -259,12 +303,99 @@ async def test_knowledge_calls_and_delegation_are_logged():
             assert knowledge["transport"] == "stdio"
             assert knowledge["result_chars"] > 0
 
-            delegation = next(item for item in events["items"] if item["kind"] == "delegation")
-            assert delegation["tool"] == "opencode-go"
+            registry = next(
+                item for item in events["items"] if item["kind"] == "sub_agent_registry"
+            )
+            assert registry["tool"] == "list_sub_agents"
+            assert registry["result_count"] == 1
+
+            managed = next(
+                item
+                for item in events["items"]
+                if item["kind"] == "delegation" and item["tool"] == "opencode-zen"
+            )
+            assert managed["model"] == "opencode/deepseek-v4-flash-free"
+            assert managed["detail"]["execution_source"] == "brain"
+            assert managed["detail"]["note"] == "Keep ownership server-trusted."
+
+            delegation = next(
+                item
+                for item in events["items"]
+                if item["kind"] == "delegation" and item["tool"] == "opencode-go"
+            )
             assert delegation["model"] == "grok-code"
             assert delegation["detail"]["status"] == "done"
             # Token/chi phí của sub-agent là do agent KHAI, không phải brain đo.
             assert delegation["detail"]["cost_source"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_stdio_server_installs_its_own_telemetry_store(monkeypatch):
+    """Bridge stdio là process riêng, nên không được dựa vào lifespan FastAPI để cắm sink."""
+    from sqlalchemy import select
+
+    import sag_api.mcp.server as mcp_server
+    import sag_api.sag as sag_module
+    from sag_api.core.db import SessionLocal, init_db
+    from sag_api.core.telemetry import AgentEventRecord, emit_agent_event
+    from sag_api.db.models import AgentEvent
+
+    class FakeEngineManager:
+        def __init__(self, _settings):
+            self.closed = False
+
+        async def aclose_all(self):
+            self.closed = True
+
+    class FakeMCP:
+        async def run_stdio_async(self):
+            await emit_agent_event(
+                AgentEventRecord(
+                    kind="knowledge_call",
+                    actor="stdio-regression",
+                    transport="stdio",
+                    tool="search",
+                    query="where is the contract?",
+                    result_count=1,
+                    result_chars=42,
+                    detail={"preview": "the contract is in source"},
+                )
+            )
+            await emit_agent_event(
+                AgentEventRecord(
+                    kind="delegation",
+                    actor="stdio-regression",
+                    transport="stdio",
+                    tool="codex",
+                    query="verify the contract",
+                    model="gpt-test",
+                    detail={"status": "done", "note": "targeted tests passed"},
+                )
+            )
+
+    await init_db()
+    monkeypatch.setattr(sag_module, "EngineManager", FakeEngineManager)
+    monkeypatch.setattr(mcp_server, "get_source_mcp", lambda: FakeMCP())
+    monkeypatch.setenv("SAG_MCP_ACTOR", "stdio-regression")
+
+    await mcp_server.serve_stdio()
+
+    async with SessionLocal() as session:
+        events = (
+            await session.execute(
+                select(AgentEvent)
+                .where(AgentEvent.actor == "stdio-regression")
+                .order_by(AgentEvent.created_at.desc())
+            )
+        ).scalars().all()
+    assert len(events) == 2
+    knowledge = next(event for event in events if event.kind == "knowledge_call")
+    delegation = next(event for event in events if event.kind == "delegation")
+    assert (knowledge.transport, knowledge.tool) == ("stdio", "search")
+    assert knowledge.query == "where is the contract?"
+    assert knowledge.detail["preview"] == "the contract is in source"
+    assert (delegation.transport, delegation.tool, delegation.model) == ("stdio", "codex", "gpt-test")
+    assert delegation.detail["status"] == "done"
 
 
 @pytest.mark.asyncio

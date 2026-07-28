@@ -23,6 +23,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from sag_api.core.telemetry import AgentEventRecord, emit_agent_event
+from sag_api.services import sub_agent_execution
 from sag_api.services.retrieval_service import retrieve_relevant_sections
 
 if TYPE_CHECKING:
@@ -78,12 +79,29 @@ MCP_TOOL_DETAILS: tuple[MCPToolDetail, ...] = (
         "description": "Read one chunk's full raw text by chunk_id, to verify and cite evidence.",
     },
     {
+        "name": "list_sub_agents",
+        "label": "List configured sub-agents",
+        "description": (
+            "Read the enabled Settings → Sub Agents registry from Brain. "
+            "Use this exact source of truth instead of guessing REST endpoints or inspecting host CLIs. "
+            "Credentials are never returned."
+        ),
+    },
+    {
+        "name": "ask_sub_agent",
+        "label": "Ask a configured sub-agent",
+        "description": (
+            "Send a bounded analysis task to one enabled provider/model using the credential stored inside Brain. "
+            "The sub-agent cannot read or edit the project filesystem, so include the relevant code/context. "
+            "Brain records the call and result preview in Telemetry."
+        ),
+    },
+    {
         "name": "log_agent_task",
         "label": "Log a delegated task",
         "description": (
-            "Record that you handed a task to a sub-agent (or finished one yourself). "
-            "The knowledge base cannot see CLI sub-agents, so this is the only way that work "
-            "shows up in the telemetry page next to its retrieval and token cost."
+            "Record a task run outside Brain, such as a host CLI sub-agent. "
+            "Do not use this after ask_sub_agent because that tool records its own verified telemetry."
         ),
     },
 )
@@ -297,7 +315,8 @@ def build_source_mcp(
         instructions=(
             "SAG knowledge-base MCP: searches every source by default, or pass source_id to a tool to narrow the scope. "
             "Start with list_sources/list_documents to learn what material exists, then use search, grep, outline, "
-            "read and get_chunk to collect citable evidence. Base answers on the numbered evidence that search returns."
+            "read and get_chunk to collect citable evidence. Base answers on the numbered evidence that search returns. "
+            "For delegation, call list_sub_agents first and then ask_sub_agent; never infer Brain registry state from host CLIs."
         ),
         stateless_http=stateless_http,
         transport_security=transport_security,
@@ -612,6 +631,142 @@ def build_source_mcp(
         return f"Source: {_source_title(source)}\n\n{body}" if len(selected) > 1 else body
 
     @mcp.tool(
+        title=MCP_TOOL_LABELS["list_sub_agents"],
+        description=MCP_TOOL_DESCRIPTIONS["list_sub_agents"],
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
+    )
+    async def list_sub_agents() -> str:
+        from sag_api.core.db import SessionLocal
+
+        scope = _scope.get()
+        async with SessionLocal() as session:
+            entries = await sub_agent_execution.list_available_sub_agents(session)
+        if not entries:
+            result = "(no enabled sub-agent is configured in Settings → Sub Agents)"
+        else:
+            lines = []
+            for entry in entries:
+                verified = entry["model_verified"]
+                verification = "n/a" if verified is None else ("yes" if verified else "no")
+                name = entry["provider_name"] or entry["display_name"]
+                lines.append(
+                    f"- {entry['provider']} | {name} | model={entry['model']} | "
+                    f"credential_set={'yes' if entry['credential_set'] else 'no'} | "
+                    f"model_verified={verification} | callable={'yes' if entry['callable'] else 'no'}"
+                )
+            result = "\n".join(lines)
+        await emit_agent_event(
+            AgentEventRecord(
+                kind="sub_agent_registry",
+                actor=scope.actor if scope else "unknown",
+                transport=scope.transport if scope else "http",
+                tool="list_sub_agents",
+                ok=True,
+                result_count=len(entries),
+                result_chars=len(result),
+                detail={"preview": result[:2000]},
+            )
+        )
+        return result
+
+    @mcp.tool(
+        title=MCP_TOOL_LABELS["ask_sub_agent"],
+        description=MCP_TOOL_DESCRIPTIONS["ask_sub_agent"],
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def ask_sub_agent(
+        provider: Annotated[
+            str,
+            Field(
+                description=(
+                    "Exact provider id returned by list_sub_agents, for example "
+                    "opencode-zen, gemini-cli, or custom."
+                ),
+                max_length=32,
+            ),
+        ],
+        task: Annotated[
+            str,
+            Field(
+                description="A concrete bounded analysis or review task. The sub-agent has no filesystem access.",
+                max_length=8000,
+            ),
+        ],
+        context: Annotated[
+            str,
+            Field(
+                description="Relevant code, diff, constraints and recalled knowledge needed to answer the task.",
+                max_length=24000,
+            ),
+        ] = "",
+    ) -> str:
+        from sag_api.core.db import SessionLocal
+
+        scope = _scope.get()
+        actor = scope.actor if scope else "unknown"
+        transport = scope.transport if scope else "http"
+        started = time.perf_counter()
+        try:
+            async with SessionLocal() as session:
+                result = await sub_agent_execution.invoke_sub_agent(
+                    session,
+                    provider,
+                    task,
+                    context=context,
+                    actor=actor,
+                )
+        except Exception as error:
+            await emit_agent_event(
+                AgentEventRecord(
+                    kind="delegation",
+                    actor=actor,
+                    transport=transport,
+                    tool=(provider or "unknown")[:64],
+                    query=(task or "").strip()[:2000],
+                    ok=False,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    detail={
+                        "status": "failed",
+                        "note": str(error)[:2000],
+                        "execution_source": "brain",
+                    },
+                    error=str(error)[:2000],
+                )
+            )
+            raise
+        response = (
+            f"{result.display_name} · {result.model}\n\n{result.content}"
+        )
+        await emit_agent_event(
+            AgentEventRecord(
+                kind="delegation",
+                actor=actor,
+                transport=transport,
+                tool=result.provider,
+                query=(task or "").strip()[:2000],
+                model=result.model,
+                ok=True,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                result_count=1,
+                result_chars=len(result.content),
+                detail={
+                    "status": "done",
+                    "note": result.content[:2000],
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                    "usage_source": "provider",
+                    "execution_source": "brain",
+                },
+            )
+        )
+        return response
+
+    @mcp.tool(
         title=MCP_TOOL_LABELS["log_agent_task"],
         description=MCP_TOOL_DESCRIPTIONS["log_agent_task"],
         annotations=ToolAnnotations(
@@ -692,9 +847,14 @@ async def serve_stdio(source_id: str | None = None) -> None:
     from sqlalchemy import select
 
     from sag_api.core.config import settings
-    from sag_api.core.db import SessionLocal
+    from sag_api.core.db import SessionLocal, dispose_db
     from sag_api.db.models import Source
     from sag_api.sag import EngineManager
+    from sag_api.services import telemetry_service
+    from sag_api.services.telemetry_service import (
+        install_telemetry_store,
+        uninstall_telemetry_store,
+    )
 
     engine_manager = EngineManager(settings)
     async with SessionLocal() as session:
@@ -711,11 +871,20 @@ async def serve_stdio(source_id: str | None = None) -> None:
     # Cầu nối stdio không có header để tự giới thiệu; agent khai tên qua biến môi trường
     # trong chính lệnh bridge (`docker exec -e SAG_MCP_ACTOR=claude-code …`).
     actor = os.environ.get("SAG_MCP_ACTOR", "").strip() or "mcp-stdio"
+    # stdio chạy trong một process `docker exec` riêng, không đi qua lifespan FastAPI.
+    # Nếu không cắm sink tại đây thì mọi `_traced(...)` và `log_agent_task` đều emit vào
+    # `None`: đường HTTP có telemetry nhưng đúng đường bridge được khuyên dùng lại mất sạch.
+    install_telemetry_store(SessionLocal)
     try:
+        await telemetry_service.prune_now()
         with use_scope(engine_manager, sources, actor=actor, transport="stdio"):
             await mcp.run_stdio_async()
     finally:
-        await engine_manager.aclose_all()
+        try:
+            await engine_manager.aclose_all()
+            await dispose_db()
+        finally:
+            uninstall_telemetry_store()
 
 
 def _main() -> None:

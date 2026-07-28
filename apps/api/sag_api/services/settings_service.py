@@ -401,6 +401,30 @@ async def stored_sub_agent_credential(session: AsyncSession, provider: str) -> s
     return None
 
 
+async def load_sub_agent_for_execution(
+    session: AsyncSession,
+    provider: str,
+) -> dict | None:
+    """Nạp một slot đã bật cho tầng thực thi nội bộ.
+
+    Hàm này là ranh giới duy nhất đưa plaintext credential ra khỏi settings service.
+    Giá trị chỉ sống trong process Brain; API và MCP không bao giờ trả dict này cho client.
+    """
+    row = await _load_row(session, _SUB_AGENTS_KEY)
+    for entry in _sub_agent_entries(row):
+        if entry.get("provider") != provider or not entry.get("enabled"):
+            continue
+        item = {key: value for key, value in entry.items() if key != "credential"}
+        stored = entry.get("credential")
+        item["credential"] = (
+            decrypt_secret(stored, _settings.secret_key)
+            if isinstance(stored, str) and stored
+            else None
+        )
+        return item
+    return None
+
+
 async def save_sub_agent_config(
     session: AsyncSession,
     entries: list[dict],

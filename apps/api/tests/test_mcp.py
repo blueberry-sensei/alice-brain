@@ -83,10 +83,11 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                         assert tool.title == detail["label"]
                         assert tool.description == detail["description"]
                         assert tool.annotations is not None
-                        # Every knowledge tool stays read-only; log_agent_task is the one
-                        # writer (it records telemetry, never knowledge), so it is declared
-                        # as such instead of quietly pretending to be read-only.
-                        assert tool.annotations.readOnlyHint is (detail["name"] != "log_agent_task")
+                        # ask_sub_agent spends an external request; log_agent_task writes
+                        # telemetry. Both must say so instead of posing as read-only.
+                        assert tool.annotations.readOnlyHint is (
+                            detail["name"] not in {"ask_sub_agent", "log_agent_task"}
+                        )
                         assert tool.annotations.destructiveHint is False
                     search_properties = tools_by_name["search"].inputSchema["properties"]
                     assert search_properties["query"]["description"]
@@ -126,6 +127,82 @@ async def test_source_mcp_lists_and_calls_tools_over_engine():
                     # what matters is that the tool dispatches correctly and returns a structured MCP response without crashing the server
                     r_search = await client.call_tool("search", {"query": "\u4efb\u610f\u95ee\u9898", "source_id": src["id"]})
                     assert r_search.content and isinstance(r_search.content[0].text, str)
+
+
+@pytest.mark.asyncio
+async def test_mcp_lists_registry_and_executes_sub_agent_with_verified_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from sag_api.core.telemetry import set_agent_event_sink
+    from sag_api.services import sub_agent_execution
+
+    events = []
+
+    async def fake_list(_session):
+        return [
+            {
+                "provider": "opencode-zen",
+                "display_name": "OpenCode ZEN",
+                "provider_name": "",
+                "model": "opencode/deepseek-v4-flash-free",
+                "credential_set": True,
+                "model_verified": True,
+                "callable": True,
+                "error": None,
+            }
+        ]
+
+    async def fake_invoke(
+        _session,
+        provider,
+        task,
+        *,
+        context="",
+        actor="unknown",
+    ):
+        assert provider == "opencode-zen"
+        assert task == "Review auth boundary"
+        assert context == "source excerpt"
+        assert actor == "claude-code"
+        return sub_agent_execution.SubAgentResult(
+            provider=provider,
+            display_name="OpenCode ZEN",
+            model="opencode/deepseek-v4-flash-free",
+            content="Do not trust the client-provided owner id.",
+            input_tokens=20,
+            output_tokens=9,
+            total_tokens=29,
+        )
+
+    async def capture(record):
+        events.append(record)
+
+    monkeypatch.setattr(sub_agent_execution, "list_available_sub_agents", fake_list)
+    monkeypatch.setattr(sub_agent_execution, "invoke_sub_agent", fake_invoke)
+    set_agent_event_sink(capture)
+    try:
+        mcp = build_source_mcp()
+        with use_scope(SimpleNamespace(), (), actor="claude-code", transport="stdio"):
+            async with connect(mcp) as client:
+                await client.initialize()
+                registry = await client.call_tool("list_sub_agents", {})
+                delegated = await client.call_tool(
+                    "ask_sub_agent",
+                    {
+                        "provider": "opencode-zen",
+                        "task": "Review auth boundary",
+                        "context": "source excerpt",
+                    },
+                )
+    finally:
+        set_agent_event_sink(None)
+
+    assert "callable=yes" in registry.content[0].text
+    assert "Do not trust the client-provided owner id." in delegated.content[0].text
+    assert [event.kind for event in events] == ["sub_agent_registry", "delegation"]
+    assert events[1].tool == "opencode-zen"
+    assert events[1].detail["status"] == "done"
+    assert events[1].detail["input_tokens"] == 20
 
 
 @pytest.mark.asyncio
