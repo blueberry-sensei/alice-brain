@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Eye, EyeOff, RotateCw, Save } from "lucide-react";
+import { Download, Eye, EyeOff, KeyRound, RotateCw, Save, Upload } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { SettingsSection } from "@/components/features/settings-section";
+import { SecureConfigTransferDialog } from "@/components/features/secure-config-transfer-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,13 +23,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { api, ApiError } from "@/lib/api";
+import {
+  createSettingsTransfer,
+  datedJsonFilename,
+  downloadJsonFile,
+  isSubAgentProviderId,
+  parsePortableConfigBundle,
+  parseSettingsTransfer,
+} from "@/lib/settings-config-transfer";
 import type {
+  PortableConfigBundle,
   SubAgentConfig,
   SubAgentEntryInput,
   SubAgentProviderId,
   SubAgentProviderSpec,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function emptyEntry(spec: SubAgentProviderSpec): SubAgentEntryInput {
   return {
@@ -79,7 +93,12 @@ export function SubAgentConfigForm() {
   >({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [secureBusy, setSecureBusy] = React.useState(false);
+  const [secureMode, setSecureMode] = React.useState<"export" | "import" | null>(null);
+  const [pendingPortableBundle, setPendingPortableBundle] =
+    React.useState<PortableConfigBundle | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const importInputRef = React.useRef<HTMLInputElement>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -199,6 +218,103 @@ export function SubAgentConfigForm() {
       toast.error(error instanceof ApiError ? error.message : t("saveFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  function exportConfig() {
+    const bundle = createSettingsTransfer("alice-sub-agent-config", {
+      entries: entries.map((entry) => ({
+        provider: entry.provider,
+        model: entry.model.trim(),
+        provider_name: entry.provider_name.trim(),
+        base_url: entry.base_url?.trim() || null,
+        enabled: entry.enabled,
+      })),
+    });
+    downloadJsonFile(datedJsonFilename("alice-sub-agent-config"), bundle);
+    toast.success(t("exported"));
+  }
+
+  async function importConfig(file: File) {
+    try {
+      const text = await file.text();
+      const portable = parsePortableConfigBundle(text, "alice-sub-agent-config");
+      if (portable) {
+        setPendingPortableBundle(portable);
+        setSecureMode("import");
+        return;
+      }
+      const bundle = parseSettingsTransfer(text, "alice-sub-agent-config");
+      if (!Array.isArray(bundle.config.entries)) throw new Error("invalid_entries");
+      const importedByProvider = new Map<SubAgentProviderId, Record<string, unknown>>();
+      for (const raw of bundle.config.entries) {
+        if (!isRecord(raw) || !isSubAgentProviderId(raw.provider)) {
+          throw new Error("invalid_provider");
+        }
+        if (!providers.some((provider) => provider.id === raw.provider)) {
+          throw new Error("unknown_provider");
+        }
+        importedByProvider.set(raw.provider, raw);
+      }
+
+      const currentByProvider = new Map(entries.map((entry) => [entry.provider, entry]));
+      const nextEntries = providers.map((spec) => {
+        const raw = importedByProvider.get(spec.id);
+        if (!raw) return emptyEntry(spec);
+        const previous = currentByProvider.get(spec.id);
+        const baseUrl = typeof raw.base_url === "string" && raw.base_url.trim()
+          ? raw.base_url.trim()
+          : null;
+        const canKeepCredential = Boolean(
+          previous?.credential_set_hint && (previous.base_url ?? null) === baseUrl,
+        );
+        return {
+          provider: spec.id,
+          model: typeof raw.model === "string" ? raw.model : "",
+          provider_name:
+            typeof raw.provider_name === "string"
+              ? raw.provider_name
+              : spec.id === "custom"
+                ? ""
+                : spec.display_name,
+          base_url: baseUrl,
+          enabled: raw.enabled === true,
+          credential: "",
+          credential_set_hint: canKeepCredential,
+          model_verified: false,
+        } satisfies SubAgentEntryInput;
+      });
+      setEntries(nextEntries);
+      setModels({});
+      setDiscoveryErrors({});
+      setVisible(new Set());
+      toast.success(t("imported", { count: importedByProvider.size }));
+    } catch {
+      toast.error(t("importFailed"));
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  async function transferEncrypted(passphrase: string) {
+    setSecureBusy(true);
+    try {
+      if (secureMode === "export") {
+        const bundle = await api.exportPortableConfig("alice-sub-agent-config", passphrase);
+        downloadJsonFile(datedJsonFilename("alice-sub-agent-config-encrypted"), bundle);
+        toast.success(t("secureExported"));
+      } else {
+        if (!pendingPortableBundle) throw new Error("missing_bundle");
+        await api.importPortableConfig(pendingPortableBundle, passphrase);
+        await load();
+        toast.success(t("secureImported"));
+      }
+      setSecureMode(null);
+      setPendingPortableBundle(null);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : t("secureTransferFailed"));
+    } finally {
+      setSecureBusy(false);
     }
   }
 
@@ -430,12 +546,58 @@ export function SubAgentConfigForm() {
       </SettingsSection>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-        <p className="text-sm text-muted-foreground">{t("saveHint")}</p>
-        <Button type="button" onClick={() => void save()} disabled={saving}>
-          {saving ? <Spinner /> : <Save />}
-          {saving ? t("saving") : t("save")}
-        </Button>
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">{t("saveHint")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("transferHint")}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importConfig(file);
+            }}
+          />
+          <Button type="button" variant="outline" onClick={exportConfig}>
+            <Download />
+            {t("export")}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setSecureMode("export")}>
+            <KeyRound />
+            {t("exportEncrypted")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => importInputRef.current?.click()}
+          >
+            <Upload />
+            {t("import")}
+          </Button>
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? <Spinner /> : <Save />}
+            {saving ? t("saving") : t("save")}
+          </Button>
+        </div>
       </div>
+      <SecureConfigTransferDialog
+        open={secureMode !== null}
+        mode={secureMode ?? "export"}
+        description={t(
+          secureMode === "import" ? "secureImportDescription" : "secureExportDescription",
+        )}
+        busy={secureBusy}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSecureMode(null);
+            setPendingPortableBundle(null);
+          }
+        }}
+        onSubmit={transferEncrypted}
+      />
     </div>
   );
 }

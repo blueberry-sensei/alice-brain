@@ -403,6 +403,32 @@ export interface SubAgentModels {
   models: string[];
 }
 
+export type PortableConfigKind = "alice-model-config" | "alice-sub-agent-config";
+
+export interface PortableConfigBundle {
+  format: "alice-portable-config";
+  version: 1;
+  kind: PortableConfigKind;
+  contains_secrets: true;
+  cipher: "AES-256-GCM";
+  kdf: {
+    name: "scrypt";
+    salt: string;
+    n: number;
+    r: number;
+    p: number;
+  };
+  nonce: string;
+  ciphertext: string;
+}
+
+export interface PortableConfigImportResult {
+  kind: PortableConfigKind;
+  applied: true;
+  disabled_for_verification?: number;
+  config: ModelConfig | SubAgentConfig;
+}
+
 export interface McpToolDetail {
   name: string;
   label: string;

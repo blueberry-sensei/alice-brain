@@ -29,6 +29,38 @@ class SystemPreferencesUpdate(BaseModel):
         return normalized
 
 
+PortableConfigKind = Literal["alice-model-config", "alice-sub-agent-config"]
+
+
+class PortableConfigKdf(BaseModel):
+    name: Literal["scrypt"]
+    salt: str = Field(min_length=1, max_length=256)
+    n: int
+    r: int
+    p: int
+
+
+class PortableConfigBundle(BaseModel):
+    format: Literal["alice-portable-config"]
+    version: Literal[1]
+    kind: PortableConfigKind
+    contains_secrets: Literal[True]
+    cipher: Literal["AES-256-GCM"]
+    kdf: PortableConfigKdf
+    nonce: str = Field(min_length=1, max_length=256)
+    ciphertext: str = Field(min_length=1, max_length=2_000_000)
+
+
+class ConfigTransferExportRequest(BaseModel):
+    kind: PortableConfigKind
+    passphrase: str = Field(min_length=12, max_length=256)
+
+
+class ConfigTransferImportRequest(BaseModel):
+    bundle: PortableConfigBundle
+    passphrase: str = Field(min_length=12, max_length=256)
+
+
 class SubAgentEntry(BaseModel):
     """Một slot sub-agent trên UI; credential rỗng nghĩa là giữ bản đã lưu."""
 

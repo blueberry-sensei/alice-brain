@@ -1,13 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { Lock, LockOpen, RotateCw, Save } from "lucide-react";
+import { Download, KeyRound, Lock, LockOpen, RotateCw, Save, Upload } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { useApp } from "@/components/features/app-shell";
 import { ProviderAttemptLog } from "@/components/features/provider-attempt-log";
 import { ProviderChainEditor } from "@/components/features/provider-chain-editor";
+import { SecureConfigTransferDialog } from "@/components/features/secure-config-transfer-dialog";
 import { SettingsRow, SettingsSection } from "@/components/features/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -17,14 +18,35 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import { api, ApiError } from "@/lib/api";
+import {
+  createSettingsTransfer,
+  datedJsonFilename,
+  downloadJsonFile,
+  isModelProviderId,
+  parsePortableConfigBundle,
+  parseSettingsTransfer,
+} from "@/lib/settings-config-transfer";
 import type {
   LLMProviderEntryInput,
   ModelConfig,
   ModelConfigPatch,
   ModelProviderSpec,
+  PortableConfigBundle,
   ProviderAttempt,
   ProviderHealth,
 } from "@/lib/types";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
 
 export function ModelConfigForm() {
   const t = useTranslations("ModelConfig");
@@ -33,6 +55,11 @@ export function ModelConfigForm() {
   const [providers, setProviders] = React.useState<ModelProviderSpec[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [secureBusy, setSecureBusy] = React.useState(false);
+  const [secureMode, setSecureMode] = React.useState<"export" | "import" | null>(null);
+  const [pendingPortableBundle, setPendingPortableBundle] =
+    React.useState<PortableConfigBundle | null>(null);
+  const importInputRef = React.useRef<HTMLInputElement>(null);
 
   const [entries, setEntries] = React.useState<LLMProviderEntryInput[]>([]);
   const [health, setHealth] = React.useState<ProviderHealth[]>([]);
@@ -152,6 +179,135 @@ export function ModelConfigForm() {
       toast.error(error instanceof ApiError ? error.message : t("saveFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  function exportConfig() {
+    const patch = currentPatch();
+    const bundle = createSettingsTransfer("alice-model-config", {
+      ...patch,
+      // Embedding bị khoá chỉ để chống sửa nhầm; export vẫn phải mang cấu hình đang thấy.
+      embedding_model: embModel.trim(),
+      embedding_base_url: embBaseUrl.trim() || null,
+      embedding_dimensions: embDims.trim() ? Number(embDims) : null,
+    });
+    downloadJsonFile(datedJsonFilename("alice-model-config"), bundle);
+    toast.success(t("exported"));
+  }
+
+  async function importConfig(file: File) {
+    try {
+      const text = await file.text();
+      const portable = parsePortableConfigBundle(text, "alice-model-config");
+      if (portable) {
+        setPendingPortableBundle(portable);
+        setSecureMode("import");
+        return;
+      }
+      const bundle = parseSettingsTransfer(text, "alice-model-config");
+      const imported = bundle.config;
+      if (!Array.isArray(imported.llm_providers)) throw new Error("invalid_providers");
+
+      const currentById = new Map(entries.map((entry) => [entry.id, entry]));
+      const nextEntries: LLMProviderEntryInput[] = imported.llm_providers.map((raw, index) => {
+        if (!isRecord(raw) || typeof raw.id !== "string" || !isModelProviderId(raw.provider)) {
+          throw new Error("invalid_provider");
+        }
+        if (!providers.some((provider) => provider.id === raw.provider)) {
+          throw new Error("unknown_provider");
+        }
+        const previous = currentById.get(raw.id);
+        const baseUrl = optionalString(raw.base_url);
+        const canKeepKey = Boolean(
+          previous?.api_key_set_hint &&
+            previous.provider === raw.provider &&
+            (previous.base_url ?? null) === baseUrl,
+        );
+        return {
+          id: raw.id,
+          provider: raw.provider,
+          model: typeof raw.model === "string" ? raw.model : "",
+          label: typeof raw.label === "string" ? raw.label : "",
+          base_url: baseUrl,
+          priority: optionalNumber(raw.priority) ?? index,
+          enabled: raw.enabled !== false,
+          extra_body: isRecord(raw.extra_body) ? raw.extra_body : null,
+          cooldown_seconds: optionalNumber(raw.cooldown_seconds) ?? 60,
+          temperature: optionalNumber(raw.temperature),
+          max_tokens: optionalNumber(raw.max_tokens),
+          timeout_ms: optionalNumber(raw.timeout_ms),
+          max_retries: optionalNumber(raw.max_retries),
+          api_key: "",
+          api_key_set_hint: canKeepKey,
+        };
+      });
+      setEntries(nextEntries);
+
+      if (optionalNumber(imported.llm_temperature) !== null) {
+        setTemperature(optionalNumber(imported.llm_temperature) as number);
+      }
+      if (optionalNumber(imported.llm_max_tokens) !== null) {
+        setMaxTokens(optionalNumber(imported.llm_max_tokens) as number);
+      }
+      if (optionalNumber(imported.llm_timeout_ms) !== null) {
+        setTimeoutMs(optionalNumber(imported.llm_timeout_ms) as number);
+      }
+      if (optionalNumber(imported.llm_max_retries) !== null) {
+        setMaxRetries(optionalNumber(imported.llm_max_retries) as number);
+      }
+      if (optionalNumber(imported.llm_context_window) !== null) {
+        setCtxWindow(optionalNumber(imported.llm_context_window) as number);
+      }
+
+      const nextEmbeddingModel = Object.hasOwn(imported, "embedding_model")
+        ? optionalString(imported.embedding_model) ?? embModel
+        : embModel;
+      const nextEmbeddingBaseUrl = Object.hasOwn(imported, "embedding_base_url")
+        ? optionalString(imported.embedding_base_url) ?? ""
+        : embBaseUrl;
+      const nextEmbeddingDimensions = Object.hasOwn(imported, "embedding_dimensions")
+        ? optionalNumber(imported.embedding_dimensions)
+        : embDims.trim()
+          ? optionalNumber(Number(embDims))
+          : null;
+      const embeddingChanged =
+        nextEmbeddingModel !== embModel ||
+        nextEmbeddingBaseUrl !== embBaseUrl ||
+        (nextEmbeddingDimensions === null ? "" : String(nextEmbeddingDimensions)) !== embDims;
+      setEmbModel(nextEmbeddingModel);
+      setEmbBaseUrl(nextEmbeddingBaseUrl);
+      setEmbDims(nextEmbeddingDimensions === null ? "" : String(nextEmbeddingDimensions));
+      setEmbKey("");
+      if (embeddingChanged) setEmbUnlocked(true);
+
+      toast.success(t("imported", { count: nextEntries.length }));
+    } catch {
+      toast.error(t("importFailed"));
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  async function transferEncrypted(passphrase: string) {
+    setSecureBusy(true);
+    try {
+      if (secureMode === "export") {
+        const bundle = await api.exportPortableConfig("alice-model-config", passphrase);
+        downloadJsonFile(datedJsonFilename("alice-model-config-encrypted"), bundle);
+        toast.success(t("secureExported"));
+      } else {
+        if (!pendingPortableBundle) throw new Error("missing_bundle");
+        await api.importPortableConfig(pendingPortableBundle, passphrase);
+        await load();
+        await refreshCapabilities();
+        toast.success(t("secureImported"));
+      }
+      setSecureMode(null);
+      setPendingPortableBundle(null);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : t("secureTransferFailed"));
+    } finally {
+      setSecureBusy(false);
     }
   }
 
@@ -400,14 +556,58 @@ export function ModelConfigForm() {
       </SettingsSection>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-        <p className="text-muted-foreground min-w-0 text-sm">{t("saveHint")}</p>
+        <div className="min-w-0">
+          <p className="text-muted-foreground text-sm">{t("saveHint")}</p>
+          <p className="text-muted-foreground mt-1 text-xs">{t("transferHint")}</p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importConfig(file);
+            }}
+          />
+          <Button type="button" variant="outline" onClick={exportConfig}>
+            <Download />
+            {t("export")}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setSecureMode("export")}>
+            <KeyRound />
+            {t("exportEncrypted")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => importInputRef.current?.click()}
+          >
+            <Upload />
+            {t("import")}
+          </Button>
           <Button type="button" onClick={save} disabled={saving}>
             {saving ? <Spinner /> : <Save />}
             {saving ? t("saving") : t("save")}
           </Button>
         </div>
       </div>
+      <SecureConfigTransferDialog
+        open={secureMode !== null}
+        mode={secureMode ?? "export"}
+        description={t(
+          secureMode === "import" ? "secureImportDescription" : "secureExportDescription",
+        )}
+        busy={secureBusy}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSecureMode(null);
+            setPendingPortableBundle(null);
+          }
+        }}
+        onSubmit={transferEncrypted}
+      />
     </div>
   );
 }

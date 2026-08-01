@@ -314,6 +314,21 @@ def effective_model_config() -> dict:
     }
 
 
+def portable_model_config_with_secrets() -> dict:
+    """Ảnh cấu hình đầy đủ để mã hoá thành bundle portable bên trong API process.
+
+    Hàm này không được dùng làm response trực tiếp: dict trả về chứa plaintext API key.
+    """
+    config = {
+        key: getattr(_settings, key)
+        for key in _FIELDS
+        if key not in {"llm_providers", "embedding_api_key"}
+    }
+    config["llm_providers"] = [dict(entry) for entry in _settings.llm_providers]
+    config["embedding_api_key"] = _settings.embedding_api_key
+    return config
+
+
 async def get_system_preferences(session: AsyncSession) -> dict[str, str | bool]:
     row = await _load_row(session, _PREFERENCES_KEY)
     stored = dict(row.value) if row and isinstance(row.value, dict) else {}
@@ -386,6 +401,26 @@ async def get_sub_agent_config(session: AsyncSession) -> dict:
         "providers": sub_agent_provider_catalog(),
         "entries": _masked_sub_agent_entries(_sub_agent_entries(row)),
     }
+
+
+async def portable_sub_agent_config_with_secrets(session: AsyncSession) -> dict:
+    """Registry đầy đủ để mã hoá portable; plaintext chỉ sống trong API process."""
+    row = await _load_row(session, _SUB_AGENTS_KEY)
+    entries: list[dict] = []
+    for raw in _sub_agent_entries(row):
+        item = dict(raw)
+        stored = item.get("credential")
+        if isinstance(stored, str) and stored:
+            credential = decrypt_secret(stored, _settings.secret_key)
+            if credential is None:
+                provider = item.get("provider")
+                raise ConfigurationError(
+                    f"Không giải mã được credential của {provider}",
+                    code="credential_undecryptable",
+                )
+            item["credential"] = credential
+        entries.append(item)
+    return {"entries": entries}
 
 
 async def stored_sub_agent_credential(session: AsyncSession, provider: str) -> str | None:

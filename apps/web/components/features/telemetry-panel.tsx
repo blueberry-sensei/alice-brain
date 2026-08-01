@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bot, Coins, Database, RotateCw, Trash2 } from "lucide-react";
+import { Bot, Coins, Database, Download, RotateCw, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
@@ -10,11 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/lib/api";
 import { readClientLocale } from "@/i18n/client";
 import { formatTokenCount } from "@/lib/format";
+import { datedJsonFilename, downloadJsonFile } from "@/lib/settings-config-transfer";
 import type {
   TelemetryAgentEvent,
   TelemetryBucket,
@@ -27,6 +29,23 @@ const RANGES = [1, 7, 30] as const;
 const ROW_LIMIT = 50;
 /** Server có thể thêm stage mới; stage lạ hiển thị nguyên văn thay vì làm vỡ i18n. */
 const KNOWN_STAGES = ["extraction", "generation", "embedding", "probe"] as const;
+
+function mergeUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...incoming.filter((item) => !seen.has(item.id))];
+}
+
+async function fetchAll<T>(
+  loader: (offset: number, limit: number) => Promise<{ total: number; items: T[] }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  const limit = 200;
+  while (true) {
+    const page = await loader(items.length, limit);
+    items.push(...page.items);
+    if (page.items.length === 0 || items.length >= page.total) return items;
+  }
+}
 
 /** Chi phí nhỏ tới mức 4 chữ số sau dấu phẩy vẫn ra 0 — hiển thị 6 chữ số cho khỏi thành "0". */
 function formatCost(value: number, locale: string): string {
@@ -125,18 +144,30 @@ function BucketTable({
   );
 }
 
-function CallList({ calls, locale }: { calls: TelemetryLLMCall[]; locale: string }) {
+function CallList({
+  calls,
+  total,
+  locale,
+  loadingMore,
+  onLoadMore,
+}: {
+  calls: TelemetryLLMCall[];
+  total: number;
+  locale: string;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+}) {
   const t = useTranslations("Telemetry");
   const stageLabel = useStageLabel();
   if (calls.length === 0) {
     return <p className="text-muted-foreground p-4 text-sm">{t("noCalls")}</p>;
   }
   return (
-    <ScrollArea className="h-80">
+    <ScrollArea className="h-[32rem] sm:h-[40rem]">
       <ul className="divide-y">
         {calls.map((call) => (
-          <li key={call.id} className="flex flex-col gap-1 p-3">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <li key={call.id} className="flex flex-col gap-2 p-4 transition-colors hover:bg-muted/30">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <span
                 className={cn(
                   "size-2 shrink-0 rounded-full",
@@ -144,36 +175,66 @@ function CallList({ calls, locale }: { calls: TelemetryLLMCall[]; locale: string
                 )}
                 aria-hidden="true"
               />
-              <span className="font-medium">{call.model || "(unknown)"}</span>
               <Badge variant="outline" className="text-xs">
                 {stageLabel(call.stage)}
+              </Badge>
+              <Badge variant={call.ok ? "secondary" : "destructive"} className="text-xs">
+                {call.ok ? t("succeeded") : t("failed")}
               </Badge>
               {call.actor && (
                 <Badge variant="secondary" className="text-xs">
                   {call.actor}
                 </Badge>
               )}
-              <span className="text-muted-foreground text-xs">
-                {formatTime(call.at, locale)} · {call.latency_ms}ms
+              <span className="text-muted-foreground ms-auto text-xs">
+                {formatTime(call.at, locale)}
               </span>
             </div>
-            <div className="text-muted-foreground flex flex-wrap gap-x-3 text-xs tabular-nums">
-              <span>
+            <div>
+              <p className="font-medium break-words">{call.model || "(unknown)"}</p>
+              <p className="text-muted-foreground text-xs">
+                {call.provider || "—"} · {call.call_type || "—"}
+              </p>
+            </div>
+            <div className="grid gap-2 text-xs tabular-nums sm:grid-cols-3">
+              <span className="rounded-md bg-muted/50 px-2.5 py-2">
                 {t("tokensInOut", {
                   input: formatTokenCount(call.input_tokens, locale),
                   output: formatTokenCount(call.output_tokens, locale),
                 })}
               </span>
-              <span>
+              <span className="rounded-md bg-muted/50 px-2.5 py-2">
                 {call.cost_usd === null ? t("costUnknown") : formatCost(call.cost_usd, locale)}
               </span>
-              {call.document_id && <span>doc={call.document_id.slice(0, 8)}</span>}
+              <span className="rounded-md bg-muted/50 px-2.5 py-2">
+                {t("latency", { value: call.latency_ms })}
+              </span>
             </div>
+            {(call.document_id || call.failure_kind) && (
+              <p className="text-muted-foreground text-xs break-all">
+                {[call.failure_kind && t("failureKind", { value: call.failure_kind }), call.document_id && `doc=${call.document_id}`]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
             {call.error && (
-              <p className="text-muted-foreground font-mono text-xs break-all">{call.error}</p>
+              <p className="text-destructive rounded-md bg-destructive/5 p-2 font-mono text-xs break-all">
+                {call.error}
+              </p>
             )}
           </li>
         ))}
+        <li className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <span className="text-muted-foreground text-xs">
+            {t("loaded", { shown: calls.length, total })}
+          </span>
+          {calls.length < total && (
+            <Button type="button" variant="outline" size="sm" disabled={loadingMore} onClick={onLoadMore}>
+              {loadingMore && <Spinner />}
+              {loadingMore ? t("loadingMore") : t("loadMore")}
+            </Button>
+          )}
+        </li>
       </ul>
     </ScrollArea>
   );
@@ -181,17 +242,23 @@ function CallList({ calls, locale }: { calls: TelemetryLLMCall[]; locale: string
 
 function AgentEventList({
   events,
+  total,
   locale,
+  loadingMore,
+  onLoadMore,
 }: {
   events: TelemetryAgentEvent[];
+  total: number;
   locale: string;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 }) {
   const t = useTranslations("Telemetry");
   if (events.length === 0) {
     return <p className="text-muted-foreground p-4 text-sm">{t("noEvents")}</p>;
   }
   return (
-    <ScrollArea className="h-80">
+    <ScrollArea className="h-[32rem] sm:h-[40rem]">
       <ul className="divide-y">
         {events.map((event) => {
           const detail = event.detail as {
@@ -211,8 +278,8 @@ function AgentEventList({
                   ? "write"
                   : "knowledge";
           return (
-            <li key={event.id} className="flex flex-col gap-1 p-3">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <li key={event.id} className="flex flex-col gap-2 p-4 transition-colors hover:bg-muted/30">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
                 <Badge
                   variant={
                     event.kind === "delegation"
@@ -226,12 +293,17 @@ function AgentEventList({
                   {t(`kind.${kind}`)}
                 </Badge>
                 <span className="font-medium">{event.tool || "—"}</span>
-                <span className="text-muted-foreground text-xs">
-                  {event.actor} · {event.transport} · {formatTime(event.at, locale)} ·{" "}
-                  {event.latency_ms}ms
+                <Badge variant={event.ok ? "secondary" : "destructive"} className="text-xs">
+                  {event.ok ? t("succeeded") : t("failed")}
+                </Badge>
+                <span className="text-muted-foreground ms-auto text-xs">
+                  {formatTime(event.at, locale)}
                 </span>
               </div>
-              {event.query && <p className="text-sm break-words">{event.query}</p>}
+              <p className="text-muted-foreground text-xs">
+                {event.actor} · {event.transport} · {t("latency", { value: event.latency_ms })}
+              </p>
+              {event.query && <p className="rounded-md bg-muted/40 p-2 text-sm break-words">{event.query}</p>}
               <div className="text-muted-foreground flex flex-wrap gap-x-3 text-xs">
                 {event.kind === "knowledge_call" ? (
                   <span>
@@ -256,13 +328,29 @@ function AgentEventList({
                 )}
               </div>
               {(detail.preview || detail.note) && (
-                <p className="text-muted-foreground line-clamp-3 font-mono text-xs break-words">
+                <p className="text-muted-foreground line-clamp-5 rounded-md border bg-card p-2 font-mono text-xs break-words">
                   {detail.note || detail.preview}
+                </p>
+              )}
+              {event.error && (
+                <p className="text-destructive rounded-md bg-destructive/5 p-2 font-mono text-xs break-all">
+                  {event.error}
                 </p>
               )}
             </li>
           );
         })}
+        <li className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <span className="text-muted-foreground text-xs">
+            {t("loaded", { shown: events.length, total })}
+          </span>
+          {events.length < total && (
+            <Button type="button" variant="outline" size="sm" disabled={loadingMore} onClick={onLoadMore}>
+              {loadingMore && <Spinner />}
+              {loadingMore ? t("loadingMore") : t("loadMore")}
+            </Button>
+          )}
+        </li>
       </ul>
     </ScrollArea>
   );
@@ -283,7 +371,12 @@ export function TelemetryPanel() {
   const [summary, setSummary] = React.useState<TelemetrySummary | null>(null);
   const [calls, setCalls] = React.useState<TelemetryLLMCall[]>([]);
   const [events, setEvents] = React.useState<TelemetryAgentEvent[]>([]);
+  const [callTotal, setCallTotal] = React.useState(0);
+  const [eventTotal, setEventTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
+  const [loadingMoreCalls, setLoadingMoreCalls] = React.useState(false);
+  const [loadingMoreEvents, setLoadingMoreEvents] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
@@ -297,6 +390,8 @@ export function TelemetryPanel() {
       setSummary(nextSummary);
       setCalls(nextCalls.items);
       setEvents(nextEvents.items);
+      setCallTotal(nextCalls.total);
+      setEventTotal(nextEvents.total);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -304,6 +399,59 @@ export function TelemetryPanel() {
       setLoading(false);
     }
   }, [days]);
+
+  const loadMoreCalls = React.useCallback(async () => {
+    setLoadingMoreCalls(true);
+    try {
+      const page = await api.telemetryCalls({ limit: ROW_LIMIT, offset: calls.length });
+      setCalls((current) => mergeUnique(current, page.items));
+      setCallTotal(page.total);
+    } catch (loadError) {
+      toast.error(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setLoadingMoreCalls(false);
+    }
+  }, [calls.length]);
+
+  const loadMoreEvents = React.useCallback(async () => {
+    setLoadingMoreEvents(true);
+    try {
+      const page = await api.telemetryAgentEvents({ limit: ROW_LIMIT, offset: events.length });
+      setEvents((current) => mergeUnique(current, page.items));
+      setEventTotal(page.total);
+    } catch (loadError) {
+      toast.error(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setLoadingMoreEvents(false);
+    }
+  }, [events.length]);
+
+  const exportReport = React.useCallback(async () => {
+    setExporting(true);
+    try {
+      const [reportSummary, allCalls, allEvents] = await Promise.all([
+        api.telemetrySummary(days),
+        fetchAll((offset, limit) => api.telemetryCalls({ offset, limit })),
+        fetchAll((offset, limit) => api.telemetryAgentEvents({ offset, limit })),
+      ]);
+      const since = new Date(reportSummary.since).getTime();
+      const report = {
+        kind: "alice-telemetry-report",
+        version: 1,
+        exported_at: new Date().toISOString(),
+        range_days: days,
+        summary: reportSummary,
+        llm_calls: allCalls.filter((call) => new Date(call.at).getTime() >= since),
+        agent_events: allEvents.filter((event) => new Date(event.at).getTime() >= since),
+      };
+      downloadJsonFile(datedJsonFilename("alice-telemetry-report"), report);
+      toast.success(t("exported"));
+    } catch (exportError) {
+      toast.error(exportError instanceof Error ? exportError.message : t("exportFailed"));
+    } finally {
+      setExporting(false);
+    }
+  }, [days, t]);
 
   React.useEffect(() => {
     void load();
@@ -344,6 +492,10 @@ export function TelemetryPanel() {
               ))}
             </ToggleGroup>
             <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => void exportReport()}>
+                {exporting ? <Spinner /> : <Download />}
+                {exporting ? t("exporting") : t("export")}
+              </Button>
               <Button type="button" variant="ghost" size="sm" onClick={() => void load()}>
                 <RotateCw />
                 {t("refresh")}
@@ -448,10 +600,22 @@ export function TelemetryPanel() {
             <TabsTrigger value="agent">{t("tabAgent")}</TabsTrigger>
           </TabsList>
           <TabsContent value="calls" className="mt-0">
-            <CallList calls={calls} locale={locale} />
+            <CallList
+              calls={calls}
+              total={callTotal}
+              locale={locale}
+              loadingMore={loadingMoreCalls}
+              onLoadMore={() => void loadMoreCalls()}
+            />
           </TabsContent>
           <TabsContent value="agent" className="mt-0">
-            <AgentEventList events={events} locale={locale} />
+            <AgentEventList
+              events={events}
+              total={eventTotal}
+              locale={locale}
+              loadingMore={loadingMoreEvents}
+              onLoadMore={() => void loadMoreEvents()}
+            />
           </TabsContent>
         </Tabs>
       </SettingsSection>

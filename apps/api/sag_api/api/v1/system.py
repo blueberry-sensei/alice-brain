@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +13,15 @@ from sag_api.core.errors import ApiError, ConfigurationError, ConflictError, Val
 from sag_api.core.llm_routing import ChainRunner, recent_attempts
 from sag_api.core.logging import get_logger
 from sag_api.core.model_providers import model_provider_catalog
+from sag_api.core.portable_config import open_portable_config, seal_portable_config
 from sag_api.core.telemetry import STAGE_PROBE
 from sag_api.core.telemetry import use_context as use_telemetry_context
 from sag_api.db.models import Source, User
 from sag_api.generation import LLMClient
 from sag_api.mcp.server import MCP_TOOL_DETAILS, MCP_TOOL_NAMES
 from sag_api.schemas.system import (
+    ConfigTransferExportRequest,
+    ConfigTransferImportRequest,
     LLMProviderEntry,
     ModelConfigUpdate,
     SubAgentConfigUpdate,
@@ -110,6 +114,72 @@ async def update_system_preferences(
         session,
         body.model_dump(exclude_unset=True),
     )
+
+
+@router.post("/config-transfer/export")
+async def export_portable_config(
+    body: ConfigTransferExportRequest,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Trả bundle ciphertext portable; API không bao giờ trả credential plaintext."""
+    if body.kind == "alice-model-config":
+        config = settings_service.portable_model_config_with_secrets()
+    else:
+        config = await settings_service.portable_sub_agent_config_with_secrets(session)
+    return seal_portable_config(body.kind, config, body.passphrase)
+
+
+@router.post("/config-transfer/import")
+async def import_portable_config(
+    body: ConfigTransferImportRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Giải mã trong API process rồi áp cấu hình; plaintext không đi ngược về browser."""
+    try:
+        config = open_portable_config(
+            body.bundle.model_dump(),
+            body.passphrase,
+            body.bundle.kind,
+        )
+    except ValueError as error:
+        raise ValidationError(
+            "Sai mật khẩu hoặc file cấu hình đã bị thay đổi",
+            code="portable_config_decryption_failed",
+        ) from error
+
+    try:
+        if body.bundle.kind == "alice-model-config":
+            validated = ModelConfigUpdate.model_validate(config)
+            result = await update_model_config(validated, request, user, session)
+            return {
+                "kind": body.bundle.kind,
+                "applied": True,
+                "config": result["config"],
+            }
+
+        validated_sub_agents = SubAgentConfigUpdate.model_validate(config)
+    except PydanticValidationError as error:
+        raise ValidationError(
+            "Bundle không còn tương thích với schema cấu hình hiện tại",
+            code="portable_config_invalid",
+        ) from error
+
+    entries = []
+    for entry in validated_sub_agents.entries:
+        item = entry.model_dump()
+        # Credential được nhập, nhưng slot phải verify model live lại trên project mới trước khi bật.
+        item["enabled"] = False
+        entries.append(item)
+    imported = await settings_service.save_sub_agent_config(session, entries)
+    return {
+        "kind": body.bundle.kind,
+        "applied": True,
+        "disabled_for_verification": len(entries),
+        "config": imported,
+    }
 
 
 @router.get("/sub-agent-config")

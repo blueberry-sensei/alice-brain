@@ -16,6 +16,9 @@ import type {
   ModelConfigPatch,
   ProviderAttemptsResponse,
   ModelProviderSpec,
+  PortableConfigBundle,
+  PortableConfigImportResult,
+  PortableConfigKind,
   ModelSetupStatus,
   KnowledgeMcpDescriptor,
   Persona,
@@ -465,6 +468,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ entries }),
     }),
+  exportPortableConfig: (kind: PortableConfigKind, passphrase: string) =>
+    request<PortableConfigBundle>("/api/v1/system/config-transfer/export", {
+      method: "POST",
+      body: JSON.stringify({ kind, passphrase }),
+    }),
+  importPortableConfig: (bundle: PortableConfigBundle, passphrase: string) =>
+    request<PortableConfigImportResult>("/api/v1/system/config-transfer/import", {
+      method: "POST",
+      body: JSON.stringify({ bundle, passphrase }),
+    }),
 
   // Model and retrieval configuration
   getModelConfig: () => request<ModelConfig>("/api/v1/system/model-config"),
@@ -498,14 +511,16 @@ export const api = {
   // Telemetry — token/chi phí của mọi lời gọi LLM, và dấu vết agent lấy tri thức
   telemetrySummary: (days = 7) =>
     request<TelemetrySummary>(`/api/v1/telemetry/summary?days=${days}`),
-  telemetryCalls: (params: { limit?: number; stage?: string; ok?: boolean } = {}) => {
+  telemetryCalls: (params: { limit?: number; offset?: number; stage?: string; ok?: boolean } = {}) => {
     const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+    if (params.offset) query.set("offset", String(params.offset));
     if (params.stage) query.set("stage", params.stage);
     if (params.ok !== undefined) query.set("ok", String(params.ok));
     return request<TelemetryPage<TelemetryLLMCall>>(`/api/v1/telemetry/llm-calls?${query}`);
   },
-  telemetryAgentEvents: (params: { limit?: number; kind?: string } = {}) => {
+  telemetryAgentEvents: (params: { limit?: number; offset?: number; kind?: string } = {}) => {
     const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+    if (params.offset) query.set("offset", String(params.offset));
     if (params.kind) query.set("kind", params.kind);
     return request<TelemetryPage<TelemetryAgentEvent>>(`/api/v1/telemetry/agent-events?${query}`);
   },
