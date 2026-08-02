@@ -162,6 +162,32 @@ def _opencode_probe_candidates(catalog: list[str]) -> list[str]:
     return ranked[:_OPENCODE_PROBE_ATTEMPTS]
 
 
+def _is_opencode_auth_error(response: httpx.Response) -> bool:
+    """Phân biệt 401 AuthError (key sai) với 401 ModelError (model không nằm trong plan).
+
+    Gateway OpenCode trả 401 cho cả hai trường hợp. Nếu không phân biệt, plan GO với key
+    đúng vẫn bị đánh trượt chỉ vì probe chọn nhầm model ZEN không có trong plan.
+    """
+    try:
+        body = response.json()
+        error = body.get("error", {})
+        if isinstance(error, dict):
+            error_type = str(error.get("type", "")).lower()
+            message = str(error.get("message", "")).lower()
+            if "autherror" in error_type:
+                return True
+            if "invalid api key" in message or "missing api key" in message:
+                return True
+            if "modelerror" in error_type or "not supported" in message:
+                return False
+    except (ValueError, TypeError):
+        pass
+    text = (response.text or "").lower()
+    if "autherror" in text or "invalid api key" in text or "missing api key" in text:
+        return True
+    return False
+
+
 async def _verify_opencode_credential(
     client: httpx.AsyncClient,
     name: str,
@@ -196,10 +222,16 @@ async def _verify_opencode_credential(
         if probe.status_code == 200:
             return
         if probe.status_code in {401, 403}:
-            raise ValidationError(
-                f"API key của {name} không hợp lệ hoặc không có quyền",
-                code="sub_agent_credential_invalid",
-            )
+            if _is_opencode_auth_error(probe):
+                raise ValidationError(
+                    f"API key của {name} không hợp lệ hoặc không có quyền",
+                    code="sub_agent_credential_invalid",
+                )
+            # ModelError: model này không nằm trong plan (vd GO không truy cập
+            # được model ZEN). Không phải lỗi key — thử model tiếp theo.
+            last_status = probe.status_code
+            last_detail = _short_detail(probe)
+            continue
         if probe.status_code == 429:
             raise ServiceUnavailableError(
                 f"{name} đang giới hạn request; hãy thử lại sau",

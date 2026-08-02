@@ -77,9 +77,13 @@ async def test_live_model_discovery_uses_provider_contracts():
 
 @pytest.mark.asyncio
 async def test_opencode_public_catalog_does_not_bypass_key_validation():
+    """401 AuthError (key sai thật) vẫn phải bị từ chối — không để lọt vì catalog công khai."""
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).endswith("/chat/completions"):
-            return httpx.Response(401)
+            return httpx.Response(
+                401,
+                json={"error": {"type": "AuthError", "message": "Invalid API key."}},
+            )
         return httpx.Response(200, json={"data": [{"id": "must-not-leak"}]})
 
     with pytest.raises(ValidationError) as error:
@@ -89,6 +93,41 @@ async def test_opencode_public_catalog_does_not_bypass_key_validation():
             transport=httpx.MockTransport(handler),
         )
     assert error.value.code == "sub_agent_credential_invalid"
+
+
+@pytest.mark.asyncio
+async def test_opencode_modelerror_is_not_auth_error():
+    """401 ModelError (model không nằm trong plan) không được coi là key sai.
+
+    Plan GO không truy cập được model ZEN, nhưng key vẫn đúng. Probe phải thử model
+    khác thay vì raise ValidationError ngay.
+    """
+    probe_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal probe_count
+        if str(request.url).endswith("/chat/completions"):
+            probe_count += 1
+            model = json.loads(request.content)["model"]
+            if model == "go-model":
+                return httpx.Response(200, json={"choices": []})
+            return httpx.Response(
+                401,
+                json={"error": {"type": "ModelError", "message": f"Model {model} is not supported"}},
+            )
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "zen-only-free"}, {"id": "go-model"}]},
+        )
+
+    result = await discover_sub_agent_models(
+        "opencode-go",
+        "good-key",
+        transport=httpx.MockTransport(handler),
+    )
+    # "zen-only-free" rẻ hơn nên probe trước → ModelError → thử tiếp "go-model" → 200
+    assert result == ["opencode-go/zen-only-free", "opencode-go/go-model"]
+    assert probe_count >= 2
 
 
 @pytest.mark.asyncio
