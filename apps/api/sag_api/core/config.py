@@ -137,6 +137,11 @@ class Settings(BaseSettings):
     # Embedding không đổi nhà khi lỗi (đổi model = đổi không gian vector, index sẽ lẫn hai hệ
     # toạ độ). Chỉ thử lại trên cùng endpoint; hết lượt là để document FAILED, không ghi thiếu vector.
     embedding_max_retries: int = Field(default=3, ge=0, le=10)
+    # Hostname của container embedding do LAUNCHER dựng kèm (danh sách ngăn bằng dấu phẩy).
+    # Chỉ dùng để trả lời một câu hỏi của launcher: "endpoint đang có hiệu lực có phải là
+    # container tôi dựng không?" — nếu không thì container đó đang chạy không công và bị thu hồi.
+    # Để trống (chạy ngoài stack ALICE) thì câu trả lời là "không biết" và không ai bị đụng tới.
+    bundled_embedding_hosts: str = ""
 
     # ── Parse tài liệu (chuyển sang Markdown trước khi vào alicecore) ────
     # Chỉ còn MarkItDown chạy CỤC BỘ. Nhánh gọi dịch vụ parse của bên thứ ba
@@ -270,7 +275,19 @@ settings = get_settings()
 #: đó chính là cách người dùng sửa `.env` rồi ngồi đợi phép màu: DB thắng, im lặng, không dấu vết.
 ENV_PROVIDED_FIELDS: frozenset[str] = frozenset(settings.model_fields_set)
 
+#: Giá trị của mọi field **trước khi** DB ghi đè — tức giá trị của môi trường, hoặc mặc định.
+#:
+#: Có bảng này thì `apply_overrides` mới dựng lại được trạng thái đầy đủ từ (môi trường + override
+#: đang lưu). Không có nó, gỡ một override trong UI chỉ khiến DB thôi khai giá trị đó, còn singleton
+#: vẫn giữ giá trị cũ tới lần restart — người dùng bấm xoá mà không thấy gì đổi.
+ENV_BASELINE: dict[str, object] = {name: getattr(settings, name) for name in type(settings).model_fields}
+
 
 def env_var_name(field: str) -> str:
     """Tên biến môi trường tương ứng một field của `Settings` (env_prefix = `SAG_`)."""
     return f"SAG_{field.upper()}"
+
+
+def same_endpoint(left: str | None, right: str | None) -> bool:
+    """Hai base_url có trỏ về cùng một nơi không (bỏ qua khác biệt vô nghĩa)."""
+    return (left or "").strip().rstrip("/").casefold() == (right or "").strip().rstrip("/").casefold()

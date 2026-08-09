@@ -19,7 +19,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sag_api.core.config import ENV_PROVIDED_FIELDS, Settings, env_var_name
+from sag_api.core.config import ENV_BASELINE, ENV_PROVIDED_FIELDS, Settings, env_var_name
+from sag_api.core.config import same_endpoint as _same_endpoint
 from sag_api.core.config import settings as _settings
 from sag_api.core.crypto import decrypt_secret, encrypt_secret
 from sag_api.core.errors import ConfigurationError
@@ -90,6 +91,12 @@ async def _load_row(session: AsyncSession, key: str = _KEY) -> Setting | None:
 def _normalize_overrides(overrides: dict) -> dict:
     """Clean up persisted configuration so a retired or invalid strategy never reaches the runtime."""
     normalized = dict(overrides)
+    # Bản cũ ghi `None` cho field nullable khi người dùng xoá ô đó, và giá trị null ấy ghi đè cả
+    # `.env`. Nay "không có khoá" mới là cách diễn đạt "không ghi đè", nên null tồn đọng được coi
+    # đúng như vậy — bản đang cài tự khỏi mà không cần thao tác tay.
+    for field in _NULLABLE_FIELDS:
+        if field in normalized and normalized[field] is None:
+            normalized.pop(field)
     strategy = normalized.get("search_strategy")
     if strategy == "atomic":
         normalized["search_strategy"] = normalize_search_strategy(strategy)
@@ -187,11 +194,6 @@ async def load_overrides(session: AsyncSession) -> dict:
     row = await _load_row(session)
     raw = dict(row.value) if row and isinstance(row.value, dict) else {}
     return _normalize_overrides(raw)
-
-
-def _same_endpoint(left: str | None, right: str | None) -> bool:
-    """Hai base_url có trỏ về cùng một nơi không (bỏ qua khác biệt vô nghĩa)."""
-    return (left or "").strip().rstrip("/").casefold() == (right or "").strip().rstrip("/").casefold()
 
 
 async def stored_provider_key(
@@ -294,6 +296,15 @@ def apply_overrides(settings: Settings, overrides: dict) -> None:
     `llm_providers` is decrypted before being written (the runtime needs plaintext), and the flat `llm_*` head fields are kept in sync.
     """
     normalized = _normalize_overrides(overrides)
+    # Dựng lại trạng thái ĐẦY ĐỦ từ (môi trường + override đang lưu), không chỉ chồng thêm.
+    # Nhờ vậy một field bị gỡ khỏi override sẽ quay về giá trị môi trường ngay trong process này,
+    # thay vì giữ giá trị cũ tới lần restart.
+    for key in _FIELDS:
+        if key == "llm_providers" or key in normalized:
+            continue
+        if key in ENV_BASELINE:
+            setattr(settings, key, ENV_BASELINE[key])
+
     _DB_PROVIDED_FIELDS.clear()
     _DB_PROVIDED_FIELDS.update(key for key in normalized if key in _FIELDS)
     # Chuỗi provider LUÔN do DB quyết định, kể cả khi rỗng: `_sync_flat_head` xoá sạch credential
@@ -578,7 +589,11 @@ async def save_model_config(session: AsyncSession, patch: dict) -> dict:
     Rules (paired with `exclude_unset`):
     - field absent -> unchanged;
     - secret field with an empty value -> ignored (the existing secret is kept, so it cannot be wiped by accident); only an explicit non-empty value overrides it;
-    - nullable field (base_url / dimensions) with an empty value -> set to None (cleared).
+    - nullable field (base_url / dimensions) with an empty value -> the stored override is **removed**.
+
+    Xoá override phải trả field về giá trị của môi trường, không phải ghi đè nó bằng `None`.
+    Ghi `None` là biến "tôi không muốn ghi đè nữa" thành "ép rỗng, kể cả khi `.env` có giá trị" —
+    và khi đó không còn đường nào từ UI quay về mặc định của bản triển khai.
     """
     row = await _load_row(session)
     raw = dict(row.value) if row and isinstance(row.value, dict) else {}
@@ -601,7 +616,8 @@ async def save_model_config(session: AsyncSession, patch: dict) -> dict:
                 stored[key] = encrypt_secret(str(value), _settings.secret_key)
             continue
         if key in _NULLABLE_FIELDS and (value is None or value == ""):
-            stored[key] = None
+            # Gỡ hẳn khoá: field quay về giá trị của môi trường thay vì bị ép None.
+            stored.pop(key, None)
             continue
         stored[key] = value
 

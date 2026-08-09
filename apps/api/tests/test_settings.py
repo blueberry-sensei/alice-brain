@@ -692,3 +692,58 @@ async def test_model_config_crud_masking_and_test(monkeypatch: pytest.MonkeyPatc
             await s.commit()
         for key, value in snapshot.items():
             setattr(settings, key, value)
+
+
+@pytest.mark.asyncio
+async def test_clearing_a_nullable_override_falls_back_to_the_environment():
+    """Xoá override trong UI phải trả field về giá trị của môi trường, không ép nó thành None.
+
+    Ghi `None` biến "tôi không muốn ghi đè nữa" thành "ép rỗng, kể cả khi `.env` có giá trị", và
+    khi đó không còn đường nào từ UI quay về mặc định của bản triển khai — người dùng bấm xoá rồi
+    ngồi đợi một thay đổi không bao giờ tới.
+    """
+    from sqlalchemy import delete, select
+
+    from sag_api.core.config import ENV_BASELINE
+    from sag_api.core.db import SessionLocal, init_db
+    from sag_api.db.models import Setting
+    from sag_api.services import settings_service
+
+    await init_db()
+    baseline = "http://embedding:11434/v1"
+    previous_baseline = ENV_BASELINE.get("embedding_base_url")
+    previous_value = settings.embedding_base_url
+    ENV_BASELINE["embedding_base_url"] = baseline
+    try:
+        async with SessionLocal() as session:
+            await settings_service.save_model_config(
+                session, {"embedding_base_url": "https://somewhere-else.example/v1"}
+            )
+            assert settings.embedding_base_url == "https://somewhere-else.example/v1"
+
+            # Xoá override -> quay về giá trị môi trường, NGAY trong process này.
+            await settings_service.save_model_config(session, {"embedding_base_url": ""})
+            assert settings.embedding_base_url == baseline
+
+            stored = await settings_service.load_overrides(session)
+            assert "embedding_base_url" not in stored
+
+            # Bản cũ đã ghi `None` vào DB: phải được đọc như "không ghi đè", không phải "ép rỗng".
+            row = await session.scalar(
+                select(Setting).where(Setting.scope == "global", Setting.key == "model_config")
+            )
+            row.value = {**dict(row.value or {}), "embedding_base_url": None}
+            await session.commit()
+            settings_service.apply_overrides(settings, await settings_service.load_overrides(session))
+            assert settings.embedding_base_url == baseline
+    finally:
+        if previous_baseline is None:
+            ENV_BASELINE.pop("embedding_base_url", None)
+        else:
+            ENV_BASELINE["embedding_base_url"] = previous_baseline
+        settings.embedding_base_url = previous_value
+        async with SessionLocal() as s:
+            await s.execute(
+                delete(Setting).where(Setting.scope == "global", Setting.key == "model_config")
+            )
+            await s.commit()

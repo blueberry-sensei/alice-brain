@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError as PydanticValidationError
@@ -35,8 +37,29 @@ router = APIRouter(prefix="/system", tags=["system"])
 log = get_logger("system")
 
 
+def _uses_bundled_embedding() -> bool | None:
+    """Endpoint embedding đang có hiệu lực có phải container do launcher dựng kèm không?
+
+    Trả lời được **cả hai chiều**, nên launcher tự chữa được cả hai hướng lệch:
+    `False` → container đang chạy không công, thu hồi; `True` → brain cần nó, phải dựng.
+    `None` = không chạy trong stack ALICE, không kết luận gì và không đụng vào cái gì.
+
+    Chỉ trả bool, không trả URL: launcher không cần biết endpoint thật, và endpoint là hạ tầng
+    nội bộ của người dùng nên không đáng phơi ra một route không auth.
+    """
+    hosts = {h.strip().casefold() for h in settings.bundled_embedding_hosts.split(",") if h.strip()}
+    if not hosts:
+        return None
+    url = settings.effective_embedding_base_url
+    if not url:
+        return None
+    return (urlparse(url).hostname or "").casefold() in hosts
+
+
 def _capabilities() -> dict:
     return {
+        # Launcher đọc cờ này để thu hồi (hoặc dựng lại) container embedding cho khớp thực tế.
+        "embedding_uses_bundled_container": _uses_bundled_embedding(),
         "llm_configured": settings.llm_configured,
         # Provider đang ở đầu chuỗi (nơi mọi lời gọi bắt đầu). Số lượng cho biết còn mấy nhà dự bị.
         "llm_provider": settings.llm_provider,
