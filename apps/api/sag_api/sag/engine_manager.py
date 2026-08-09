@@ -2735,18 +2735,38 @@ class EngineManager:
                 except Exception as e:  # noqa: BLE001
                     log.warning("Failed to release engine %s: %s", source_config_id, e)
 
+    def detach_all(self) -> list[tuple[str, _Slot]]:
+        """Gỡ mọi slot khỏi bảng NGAY LẬP TỨC và trả về chúng để đóng sau.
+
+        Tách khỏi `aclose_all` vì hai việc có chi phí khác hẳn nhau:
+
+        - *gỡ* chỉ là gán cờ + xoá dict: không await, không chờ ai;
+        - *đóng* phải `await slot.idle.wait()`, tức là chờ hết mọi ingest đang chạy — có thể vài
+          phút, và với embedding hỏng thì lâu hơn nữa.
+
+        Người bấm Save chỉ cần điều thứ nhất: từ lúc slot bị gỡ, request kế tiếp đã dựng engine
+        bằng cấu hình mới. Bắt họ chờ luôn cả việc thứ hai là lý do Save trả timeout trong khi
+        cấu hình đã ghi xong — rồi họ bấm Save năm lần vì tin là chưa lưu được.
+        """
+        slots = list(self._slots.items())
+        for _, slot in slots:
+            slot.closing = True
+        self._slots.clear()
+        return slots
+
+    async def drain(self, slots: list[tuple[str, _Slot]]) -> None:
+        """Đợi công việc đang chạy trên các slot đã gỡ rồi đóng engine. Có thể chạy ở nền."""
+        for scid, slot in slots:
+            try:
+                await slot.idle.wait()
+                async with slot.lock:
+                    await slot.engine.aclose()
+            except Exception as e:  # noqa: BLE001
+                log.warning("Failed to close engine %s: %s", scid, e)
+
     async def aclose_all(self) -> None:
         # Mark and detach first so new requests cannot grab a slot that is about to close; then wait per slot for in-flight work.
         async with self._create_lock:
             async with self._lifecycle_gate.write():
-                slots = list(self._slots.items())
-                for _, slot in slots:
-                    slot.closing = True
-                self._slots.clear()
-                for scid, slot in slots:
-                    try:
-                        await slot.idle.wait()
-                        async with slot.lock:
-                            await slot.engine.aclose()
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("Failed to close engine %s: %s", scid, e)
+                slots = self.detach_all()
+                await self.drain(slots)

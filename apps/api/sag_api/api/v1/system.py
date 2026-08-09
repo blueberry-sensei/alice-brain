@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import func, select, text
@@ -294,6 +294,7 @@ async def knowledge_mcp_descriptor(
 async def update_model_config(
     body: ModelConfigUpdate,
     request: Request,
+    background: BackgroundTasks,
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -317,7 +318,13 @@ async def update_model_config(
     engine_changed = any(before.get(key) != config.get(key) for key in engine_fields)
     engine_changed = engine_changed or bool(patch.get("embedding_api_key"))
     if engine_changed:
-        await request.app.state.engine_manager.aclose_all()
+        # Gỡ slot ngay (đồng bộ, không await): từ đây mọi request mới dựng engine bằng cấu hình
+        # vừa lưu. Việc ĐÓNG engine cũ phải chờ ingest đang chạy kết thúc — có thể vài phút — nên
+        # đẩy xuống nền. Ghép hai việc vào một lượt là lý do Save trả timeout dù DB đã commit,
+        # và người dùng bấm Save năm lần vì tưởng chưa lưu được.
+        detached = request.app.state.engine_manager.detach_all()
+        if detached:
+            background.add_task(request.app.state.engine_manager.drain, detached)
         # Provider vừa bị tắt vì sai key đáng được thử lại với key mới → xoá trạng thái cũ.
         request.app.state.llm.runner.reset()
     return {"config": config, "capabilities": _capabilities()}

@@ -446,6 +446,8 @@
     "reuseGeneration": "Reuse generation model",
     "separateEmbeddingKey": "Configure a separate embedding key",
     "optionalApiKey": "API Key (optional)",
+    "envIgnoredTitle": "Biến môi trường đang bị bỏ qua",
+    "envIgnoredBody": "Những biến này có giá trị trong môi trường (.env), nhưng giá trị lưu trong DB ở trang này mới là cái đang chạy. Sửa .env rồi restart sẽ không đổi được gì cho tới khi xoá giá trị đã lưu ở đây.",
     "embeddingLockTitle": "Khoá có chủ đích",
     "embeddingLockWarning": "Đổi model embedding, endpoint hay số chiều là đổi không gian vector. Tài liệu đã lập chỉ mục sẽ không tìm được nữa cho tới khi nạp lại toàn bộ. Chỉ mở khoá khi đã định dựng lại index.",
     "embeddingUnlock": "Mở khoá để sửa",

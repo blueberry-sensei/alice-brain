@@ -262,3 +262,15 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+#: Fields that really came from `SAG_*` / `.env` at import time, as opposed to falling back to a default.
+#:
+#: Ghi lại **trước** khi DB ghi đè singleton. Không có ảnh chụp này thì sau lúc khởi động không
+#: còn cách nào phân biệt "giá trị này đến từ .env" với "giá trị này đến từ bảng settings" — và
+#: đó chính là cách người dùng sửa `.env` rồi ngồi đợi phép màu: DB thắng, im lặng, không dấu vết.
+ENV_PROVIDED_FIELDS: frozenset[str] = frozenset(settings.model_fields_set)
+
+
+def env_var_name(field: str) -> str:
+    """Tên biến môi trường tương ứng một field của `Settings` (env_prefix = `SAG_`)."""
+    return f"SAG_{field.upper()}"

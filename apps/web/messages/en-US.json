@@ -446,6 +446,8 @@
     "reuseGeneration": "Reuse generation model",
     "separateEmbeddingKey": "Configure a separate embedding key",
     "optionalApiKey": "API Key (optional)",
+    "envIgnoredTitle": "Environment variables are being ignored",
+    "envIgnoredBody": "These are set in the environment (.env), but a value stored here in the database wins. Editing .env and restarting will change nothing until you clear the stored value on this page.",
     "embeddingLockTitle": "Locked on purpose",
     "embeddingLockWarning": "Changing the embedding model, endpoint or dimensions changes the vector space. Documents already indexed become unsearchable until you re-ingest all of them. Only unlock if you are about to rebuild the index.",
     "embeddingUnlock": "Unlock to edit",

@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sag_api.core.config import Settings
+from sag_api.core.config import ENV_PROVIDED_FIELDS, Settings, env_var_name
 from sag_api.core.config import settings as _settings
 from sag_api.core.crypto import decrypt_secret, encrypt_secret
 from sag_api.core.errors import ConfigurationError
@@ -58,6 +58,10 @@ _FIELDS = frozenset(
 )
 _SECRET_FIELDS = frozenset({"embedding_api_key"})
 _NULLABLE_FIELDS = frozenset({"embedding_base_url", "embedding_dimensions"})
+
+#: Field nào đang lấy giá trị từ DB. Cập nhật mỗi lần `apply_overrides` chạy, để tầng API trả lời
+#: được câu hỏi "giá trị này đến từ đâu" mà không phải đọc lại DB.
+_DB_PROVIDED_FIELDS: set[str] = set()
 
 _OPENAI_COMPATIBLE = get_model_provider("openai")
 
@@ -237,12 +241,64 @@ async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
     }
 
 
+def config_sources() -> dict[str, dict[str, object]]:
+    """Mỗi field cấu hình đang lấy giá trị TỪ ĐÂU, và env có đang bị bỏ qua không.
+
+    Một tham số hai nguồn mà không ai báo là loại lỗi tốn cả buổi sáng: người dùng sửa `.env`,
+    restart, rồi chờ một thay đổi không bao giờ tới, vì DB thắng trong im lặng. Hàm này biến
+    thứ tự ưu tiên thành dữ liệu nhìn thấy được — cho log lúc khởi động và cho UI.
+    """
+    sources: dict[str, dict[str, object]] = {}
+    for field in sorted(_FIELDS):
+        from_db = field in _DB_PROVIDED_FIELDS
+        from_env = field in ENV_PROVIDED_FIELDS
+        sources[field] = {
+            "source": "database" if from_db else ("environment" if from_env else "default"),
+            "env_var": env_var_name(field),
+            "env_set": from_env,
+            # Env có giá trị nhưng DB đang thắng → mọi lần sửa `.env` đều vô hiệu cho tới khi
+            # xoá giá trị trong DB (Settings → Models).
+            "env_ignored": from_env and from_db,
+        }
+    return sources
+
+
+def shadowed_env_fields() -> list[str]:
+    """Field mà env đã đặt nhưng DB đang ghi đè (env đang bị bỏ qua)."""
+    return sorted(field for field in _FIELDS if field in ENV_PROVIDED_FIELDS and field in _DB_PROVIDED_FIELDS)
+
+
+def log_config_sources() -> None:
+    """In nguồn cấu hình đang có hiệu lực. Gọi một lần lúc khởi động, sau khi đã áp override."""
+    for field in sorted(_FIELDS):
+        if field in _DB_PROVIDED_FIELDS:
+            origin = "database (settings.model_config)"
+        elif field in ENV_PROVIDED_FIELDS:
+            origin = f"environment ({env_var_name(field)})"
+        else:
+            continue
+        log.info("Config %s <- %s", field, origin)
+
+    shadowed = shadowed_env_fields()
+    if shadowed:
+        log.warning(
+            "The database overrides these environment variables, so editing .env changes nothing "
+            "until the stored value is cleared in Settings -> Models: %s",
+            ", ".join(env_var_name(field) for field in shadowed),
+        )
+
+
 def apply_overrides(settings: Settings, overrides: dict) -> None:
     """Write the stored overrides back into the settings singleton in place (the request schema already guarantees valid types).
 
     `llm_providers` is decrypted before being written (the runtime needs plaintext), and the flat `llm_*` head fields are kept in sync.
     """
     normalized = _normalize_overrides(overrides)
+    _DB_PROVIDED_FIELDS.clear()
+    _DB_PROVIDED_FIELDS.update(key for key in normalized if key in _FIELDS)
+    # Chuỗi provider LUÔN do DB quyết định, kể cả khi rỗng: `_sync_flat_head` xoá sạch credential
+    # phẳng để env không thể lén tác dụng. Ghi vào đây cho đúng với thứ đang thực sự xảy ra.
+    _DB_PROVIDED_FIELDS.add("llm_providers")
     for key, value in normalized.items():
         if key not in _FIELDS or key == "llm_providers":
             continue
@@ -284,6 +340,7 @@ async def apply_startup_overrides(session_factory: async_sessionmaker) -> None:
                 log.warning("Ignoring invalid persisted time zone: %s", timezone)
             else:
                 _settings.timezone = timezone
+    log_config_sources()
 
 
 def effective_model_config() -> dict:
@@ -311,6 +368,9 @@ def effective_model_config() -> dict:
         "search_strategy": _settings.search_strategy,
         "search_top_k": _settings.search_top_k,
         "sag_language": _settings.sag_language,
+        # Nguồn của từng field + cờ "env đang bị bỏ qua". UI dựa vào đây để nói thẳng với người
+        # dùng rằng sửa `.env` sẽ không có tác dụng, thay vì để họ tự đoán.
+        "config_sources": config_sources(),
     }
 
 
