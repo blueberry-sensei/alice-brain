@@ -134,6 +134,7 @@ async def export_portable_config(
 async def import_portable_config(
     body: ConfigTransferImportRequest,
     request: Request,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -153,7 +154,16 @@ async def import_portable_config(
     try:
         if body.bundle.kind == "alice-model-config":
             validated = ModelConfigUpdate.model_validate(config)
-            result = await update_model_config(validated, request, user, session)
+            # Gọi bằng KEYWORD, không phải vị trí: hàm này là endpoint, thứ tự tham số của nó có
+            # thể đổi khi thêm dependency, và gọi theo vị trí thì sai lệch đó không lộ ra lúc
+            # import — nó lộ ra ở runtime của người dùng.
+            result = await update_model_config(
+                body=validated,
+                request=request,
+                background=background,
+                _user=user,
+                session=session,
+            )
             return {
                 "kind": body.bundle.kind,
                 "applied": True,
