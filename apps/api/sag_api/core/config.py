@@ -140,8 +140,13 @@ class Settings(BaseSettings):
     # Hostname của container embedding do LAUNCHER dựng kèm (danh sách ngăn bằng dấu phẩy).
     # Chỉ dùng để trả lời một câu hỏi của launcher: "endpoint đang có hiệu lực có phải là
     # container tôi dựng không?" — nếu không thì container đó đang chạy không công và bị thu hồi.
-    # Để trống (chạy ngoài stack ALICE) thì câu trả lời là "không biết" và không ai bị đụng tới.
-    bundled_embedding_hosts: str = ""
+    #
+    # Mặc định là hai hostname CỐ ĐỊNH của stack, không phải chuỗi rỗng. Trước đây để rỗng và
+    # trông chờ `compose.yaml` truyền vào; nhưng `compose.yaml` là file template mà người dùng
+    # sửa được, nên ai đã sửa tay sẽ không nhận dòng đó khi nâng cấp → API trả `null` → launcher
+    # kết luận "không biết" và im lặng bỏ qua, để container Ollama chạy không công mãi mãi.
+    # Hai tên này là hằng số của stack, hard-code ở đây thì không ai làm mất được.
+    bundled_embedding_hosts: str = "embedding,alice-embedding"
 
     # ── Parse tài liệu (chuyển sang Markdown trước khi vào alicecore) ────
     # Chỉ còn MarkItDown chạy CỤC BỘ. Nhánh gọi dịch vụ parse của bên thứ ba
