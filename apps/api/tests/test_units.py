@@ -8,6 +8,7 @@ import pytest
 from sag_api.branding import DEFAULT_AGENT_NAME
 from sag_api.connectors import registry
 from sag_api.core.config import Settings, settings
+from sag_api.core.errors import UpstreamError
 from sag_api.core.litellm_policy import (
     apply_litellm_completion_policy,
     install_litellm_policy,
@@ -709,3 +710,60 @@ async def test_chain_runner_switches_provider_on_rate_limit(monkeypatch):
     recorded = llm_routing.recent_attempts(10)
     assert recorded[-1]["kind"] == "rate_limit" and recorded[-1]["action"] == "failover"
     assert recorded[0]["ok"] is True and recorded[0]["provider_id"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_chain_runner_rests_for_exactly_as_long_as_the_server_asks(monkeypatch):
+    """429 kèm `Retry-After` là lệnh cấm thật, không phải cooldown đoán được phép bỏ qua.
+
+    Trần theo phút và hết quota theo ngày dùng chung mã 429; chỉ con số của server phân biệt
+    được hai cái. Bản trước bỏ qua con số đó và luôn nghỉ `cooldown_seconds`, nên một lệnh cấm
+    một tiếng bị đâm lại sau 60 giây — và phần lớn gateway coi mỗi lần đâm là một lần gia hạn.
+    """
+    from sag_api.core import llm_routing
+    from sag_api.generation import llm as generation_llm
+
+    class _RateLimited(RuntimeError):
+        status_code = 429
+
+        def __init__(self) -> None:
+            super().__init__("rate limited")
+            self.headers = {"retry-after": "1800"}
+
+    attempts: list[str] = []
+
+    async def always_rate_limited(**kwargs):
+        attempts.append(kwargs["api_key"])
+        raise _RateLimited()
+
+    monkeypatch.setattr(generation_llm, "_litellm_completion", always_rate_limited)
+    llm_routing.clear_attempts()
+    configured = Settings(
+        _env_file=None,
+        llm_providers=[
+            {
+                "id": "only",
+                "provider": "openai",
+                "model": "m1",
+                "api_key": "only-key",
+                "priority": 10,
+                "cooldown_seconds": 60,
+            }
+        ],
+    )
+    runner = llm_routing.ChainRunner(retry_delay=0.001, max_delay=0.002)
+    client = generation_llm.LLMClient(configured, runner)
+
+    with pytest.raises(UpstreamError):
+        await client.complete([{"role": "user", "content": "ping"}])
+
+    health = runner.health_snapshot(configured.llm_chain)[0]
+    # 1800 giây của server thắng 60 giây cấu hình, và nó là ban chứ không phải gợi ý.
+    assert health["cooldown_remaining"] > 1700
+    assert health["banned_remaining"] > 1700
+
+    # Lượt kế tiếp KHÔNG được gọi lại provider đang bị cấm; lỗi phải nói còn phải chờ bao lâu.
+    with pytest.raises(UpstreamError) as blocked:
+        await client.complete([{"role": "user", "content": "ping"}])
+    assert len(attempts) == 1
+    assert "rate limit" in str(blocked.value)

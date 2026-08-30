@@ -5,10 +5,8 @@ import {
   APP_INITIALIZATION_STORAGE_KEYS,
   rememberThemeBeforeExplore,
   restoreThemeAfterExplore,
-  dismissQuickModelSetup,
   persistAppMode,
   readInitialAppState,
-  shouldShowQuickModelSetup,
   type InitializationStorage,
 } from "./app-initialization";
 
@@ -100,15 +98,5 @@ describe("app initialization", () => {
 
     expect(rememberThemeBeforeExplore(storage, "dark")).toBe("dark");
     expect(restoreThemeAfterExplore(storage)).toBe("dark");
-  });
-
-  it("shows model setup once and respects an explicit skip", () => {
-    const storage = memoryStorage();
-
-    expect(shouldShowQuickModelSetup(true, storage)).toBe(true);
-    expect(shouldShowQuickModelSetup(false, storage)).toBe(false);
-
-    dismissQuickModelSetup(storage);
-    expect(shouldShowQuickModelSetup(true, storage)).toBe(false);
   });
 });

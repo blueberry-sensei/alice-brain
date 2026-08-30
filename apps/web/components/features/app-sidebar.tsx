@@ -6,7 +6,6 @@ import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
-  LogOut,
   Settings,
 } from "lucide-react";
 
@@ -66,7 +65,7 @@ function Brand() {
 
 function NavUser() {
   const t = useTranslations("AppSidebar");
-  const { user, logout } = useApp();
+  const { user } = useApp();
   const initial = (user?.name || user?.email || "?").slice(0, 1).toUpperCase();
   return (
     <SidebarMenu>
@@ -109,10 +108,6 @@ function NavUser() {
                 <Settings className="size-4" />
                 {t("identitySettings")}
               </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
-              <LogOut className="size-4" />
-              {t("signOut")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

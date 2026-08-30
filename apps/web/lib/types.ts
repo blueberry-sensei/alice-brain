@@ -186,6 +186,8 @@ export interface ProviderHealth {
   priority: number;
   unhealthy_reason: string | null;
   cooldown_remaining: number;
+  /** Ban do server tự đặt qua `Retry-After` — khác cooldown đoán được ở chỗ không được bỏ qua. */
+  banned_remaining: number;
   consecutive_failures: number;
 }
 
@@ -321,21 +323,6 @@ export interface ModelConfig {
   search_strategy: SearchStrategy;
   search_top_k: number;
   sag_language: "en" | "vi";
-  /** Mỗi field cấu hình đang lấy giá trị từ đâu — xem `ConfigSource`. */
-  config_sources?: Record<string, ConfigSource>;
-}
-
-/**
- * Một tham số có thể đến từ hai nguồn (biến môi trường và DB) và DB luôn thắng. Không nói ra thì
- * người dùng sửa `.env`, restart, rồi chờ một thay đổi không bao giờ tới.
- */
-export interface ConfigSource {
-  source: "database" | "environment" | "default";
-  /** Tên biến môi trường tương ứng, ví dụ `SAG_EMBEDDING_API_KEY`. */
-  env_var: string;
-  env_set: boolean;
-  /** true = env CÓ giá trị nhưng DB đang ghi đè, nên sửa `.env` không có tác dụng. */
-  env_ignored: boolean;
 }
 
 export type ModelConfigPatch = Partial<{
@@ -358,12 +345,6 @@ export type ModelConfigPatch = Partial<{
   search_top_k: number;
   sag_language: "en" | "vi";
 }>;
-
-export interface ModelSetupStatus {
-  required: boolean;
-  environment_configured: boolean;
-  database_configured: boolean;
-}
 
 export interface SystemPreferences {
   timezone: string;

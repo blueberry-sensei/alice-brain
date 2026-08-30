@@ -5,9 +5,13 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sag_api.core.errors import AuthError, ConflictError, ForbiddenError, ValidationError
+from sag_api.core.errors import AuthError, ConflictError, ForbiddenError
 from sag_api.core.security import hash_password, verify_password
 from sag_api.db.models import User
+
+#: Tên của identity tự tạo khi brain được mở lần đầu. Brain là một người dùng cho mỗi project,
+#: chạy trên máy của chính người đó, nên không có gì để phân biệt và không có gì để hỏi.
+DEFAULT_LOCAL_USER_NAME = "Local"
 
 
 async def register_user(session: AsyncSession, *, email: str, password: str, name: str = "") -> User:
@@ -80,13 +84,11 @@ async def authenticate_or_register(
             await session.refresh(user)
         return user
 
-    if not name:
-        raise ValidationError("Please fill in your name first")
-
+    # Chưa có identity nào và cũng không ai đưa tên: tự mở một cái. Không hỏi, không chặn.
     user = User(
         email=email,
         password_hash=hash_password(password),
-        name=name,
+        name=name or DEFAULT_LOCAL_USER_NAME,
     )
     session.add(user)
     await session.commit()

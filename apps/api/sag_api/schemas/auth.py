@@ -20,17 +20,21 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    """Đăng nhập cục bộ. Mọi field đều tuỳ chọn: body rỗng nghĩa là "mở phiên trên máy này".
+
+    Brain chạy một người dùng cho mỗi project trên máy của chính người đó, nên bắt gõ tên trước
+    khi vào là một cửa quay không bảo vệ được gì. Tên vẫn nhận được để giữ tương thích với bản
+    cũ và cho ai muốn đặt tên identity qua API.
+    """
+
+    name: str = Field(default="", max_length=120)
     email: str = Field(default="", max_length=255)
     password: str | None = Field(default=None, max_length=128)
 
     @field_validator("name")
     @classmethod
     def _name(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Please fill in your name first")
-        return v
+        return v.strip()
 
     @field_validator("email")
     @classmethod

@@ -1,26 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login"];
-
+/**
+ * Brain là một người dùng cho mỗi project, chạy trên máy của chính người đó — không có trang
+ * đăng nhập để chuyển hướng tới. Phiên được mở tự động ở `AppShell`, nên middleware chỉ còn
+ * đúng một việc: đưa `/` về màn hình làm việc.
+ */
 export function middleware(req: NextRequest) {
-  const token = req.cookies.get("sag_token")?.value;
-  const { pathname } = req.nextUrl;
-
-  if (pathname === "/") {
-    const url = req.nextUrl.clone();
-    url.pathname = token ? "/search" : "/login";
-    return NextResponse.redirect(url);
-  }
-
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-
-  if (!token && !isPublic) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
-  }
-  if (token && isPublic) {
+  if (req.nextUrl.pathname === "/") {
     const url = req.nextUrl.clone();
     url.pathname = "/search";
     return NextResponse.redirect(url);

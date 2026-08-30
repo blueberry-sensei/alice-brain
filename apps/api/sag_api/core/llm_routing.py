@@ -6,10 +6,17 @@ của API. Luật phân loại lỗi giữ **giống nhau** để hành vi hai �
 | Loại            | Dấu hiệu                          | Hành động                          |
 |-----------------|-----------------------------------|------------------------------------|
 | `transient`     | timeout / kết nối / 5xx           | thử lại **cùng** provider (backoff)|
-| `rate_limit`    | 429 / quota / resource exhausted  | đổi provider + cho provider này nghỉ|
+| `rate_limit`    | 429 / quota / resource exhausted  | đổi provider + nghỉ theo `Retry-After` |
 | `auth`          | 401 / 403 / invalid api key       | tắt provider, đổi nhà              |
 | `model_missing` | 404 / model not found             | tắt provider, đổi nhà              |
 | `bad_request`   | 400                               | dừng luôn (đổi nhà cũng lỗi y vậy) |
+
+429 không phải một loại lỗi mà là hai loại chung một mã: hạn mức theo phút (server nói
+`Retry-After: 12`, chờ mười mấy giây là chạy tiếp) và hạn mức theo ngày (server nói một con số
+rất lớn, hoặc không nói gì). Nên cooldown ở đây lấy **con số của server** khi có; và khi server
+đã tự nói thì đó là `banned_until` — lệnh cấm thật, không phải gợi ý — vì gọi sớm ở phần lớn
+gateway chỉ làm ban dài thêm. Luật này khớp `alicecore.core.ai.routing` để đường extraction và
+đường generation không nghỉ khác nhau trên cùng một lần 429.
 
 Mọi lần thử đều được ghi vào `ATTEMPT_LOG` để UI hiển thị — **không có thất bại im lặng**.
 """
@@ -26,6 +33,7 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Iterable, TypeVar
 
 from sag_api.core.logging import get_logger
+from sag_api.core.retry_after import retry_after_seconds
 
 log = get_logger("llm_routing")
 
@@ -147,6 +155,10 @@ def clear_attempts() -> None:
 @dataclass
 class _State:
     cooldown_until: float = 0.0
+    #: Khác `cooldown_until` ở chỗ đây là con số **server tự nói** qua `Retry-After`. Cooldown
+    #: đoán ra thì có thể bỏ qua khi cả chuỗi bận; ban do server đặt thì không — gọi sớm chỉ làm
+    #: ban dài thêm, và đó chính là cách một provider bị nhốt cả ngày vì một hạn mức theo phút.
+    banned_until: float = 0.0
     unhealthy_reason: str | None = None
     consecutive_failures: int = 0
 
@@ -184,6 +196,7 @@ class ChainRunner:
                     "priority": entry.get("priority", 100),
                     "unhealthy_reason": state.unhealthy_reason,
                     "cooldown_remaining": max(0.0, round(state.cooldown_until - now, 1)),
+                    "banned_remaining": max(0.0, round(state.banned_until - now, 1)),
                     "consecutive_failures": state.consecutive_failures,
                 }
             )
@@ -201,11 +214,35 @@ class ChainRunner:
             return ready
         # Hết provider "sẵn sàng" thì vẫn thử những cái chưa bị tắt: cooldown là gợi ý,
         # không phải lệnh cấm — thà thử còn hơn trả lỗi khi có thể vẫn chạy được.
-        return [entry for entry in chain if self._state(str(entry.get("id"))).unhealthy_reason is None] or chain
+        #
+        # Ngoại lệ: provider đang trong `banned_until` thì KHÔNG được thử. Đó là con số server
+        # tự đặt qua `Retry-After`; gọi sớm không phải "cố thêm một lần", nó gia hạn ban.
+        advisory = [
+            entry
+            for entry in chain
+            if self._state(str(entry.get("id"))).unhealthy_reason is None
+            and self._state(str(entry.get("id"))).banned_until <= now
+        ]
+        if advisory:
+            return advisory
+        return [entry for entry in chain if self._state(str(entry.get("id"))).banned_until <= now]
 
     def _delay(self, attempt: int) -> float:
         base = self.retry_delay * (self.backoff_factor**attempt)
         return min(base * (0.5 + random.random() * 0.5), self.max_delay)
+
+    def _apply_rate_limit(self, label: str, entry: dict, state: _State, error: BaseException) -> None:
+        """429: nghỉ đúng bằng `Retry-After` của server nếu có, không thì theo cooldown cấu hình.
+
+        Con số của server là thứ duy nhất phân biệt được hạn mức theo phút với hạn mức theo ngày;
+        cooldown cấu hình chỉ là phỏng đoán cho gateway không chịu nói.
+        """
+        asked = retry_after_seconds(error)
+        seconds = asked if asked is not None else float(entry.get("cooldown_seconds", 60.0))
+        state.cooldown_until = time.monotonic() + seconds
+        if asked is not None:
+            state.banned_until = state.cooldown_until
+            log.warning("provider %s asked for Retry-After %.0fs - no call until then", label, asked)
 
     async def run(
         self,
@@ -271,12 +308,13 @@ class ChainRunner:
                     if kind in UNHEALTHY_KINDS:
                         state.unhealthy_reason = f"{kind.value}: {str(error)[:200]}"
                     elif kind is FailureKind.RATE_LIMIT:
-                        state.cooldown_until = time.monotonic() + float(entry.get("cooldown_seconds", 60.0))
+                        self._apply_rate_limit(label, entry, state, error)
                     failures.append(f"{label} [{kind.value}] {str(error)[:200]}")
                     break
                 else:
                     state.consecutive_failures = 0
                     state.cooldown_until = 0.0
+                    state.banned_until = 0.0
                     record_attempt(
                         AttemptRecord(
                             provider_id=provider_id,
@@ -291,5 +329,18 @@ class ChainRunner:
                     )
                     return result
 
-        detail = "; ".join(failures) if failures else "không có provider nào khả dụng"
+        detail = "; ".join(failures) if failures else self._unavailable_detail(chain)
         raise RuntimeError(detail) from last_error
+
+    def _unavailable_detail(self, chain: list[dict]) -> str:
+        """Vì sao chuỗi rỗng — "không có provider nào khả dụng" một mình là câu vô dụng."""
+        now = time.monotonic()
+        parts = []
+        for entry in chain:
+            label = str(entry.get("label") or f"{entry.get('id')} / {entry.get('model')}")
+            state = self._state(str(entry.get("id")))
+            if state.banned_until > now:
+                parts.append(f"{label} [rate limit, còn {state.banned_until - now:.0f}s]")
+            elif state.unhealthy_reason:
+                parts.append(f"{label} [{state.unhealthy_reason}]")
+        return "; ".join(parts) if parts else "không có provider nào khả dụng"

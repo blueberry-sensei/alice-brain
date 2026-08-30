@@ -243,33 +243,6 @@ async def model_setup_status(session: AsyncSession) -> dict[str, bool]:
     }
 
 
-def config_sources() -> dict[str, dict[str, object]]:
-    """Mỗi field cấu hình đang lấy giá trị TỪ ĐÂU, và env có đang bị bỏ qua không.
-
-    Một tham số hai nguồn mà không ai báo là loại lỗi tốn cả buổi sáng: người dùng sửa `.env`,
-    restart, rồi chờ một thay đổi không bao giờ tới, vì DB thắng trong im lặng. Hàm này biến
-    thứ tự ưu tiên thành dữ liệu nhìn thấy được — cho log lúc khởi động và cho UI.
-    """
-    sources: dict[str, dict[str, object]] = {}
-    for field in sorted(_FIELDS):
-        from_db = field in _DB_PROVIDED_FIELDS
-        from_env = field in ENV_PROVIDED_FIELDS
-        sources[field] = {
-            "source": "database" if from_db else ("environment" if from_env else "default"),
-            "env_var": env_var_name(field),
-            "env_set": from_env,
-            # Env có giá trị nhưng DB đang thắng → mọi lần sửa `.env` đều vô hiệu cho tới khi
-            # xoá giá trị trong DB (Settings → Models).
-            "env_ignored": from_env and from_db,
-        }
-    return sources
-
-
-def shadowed_env_fields() -> list[str]:
-    """Field mà env đã đặt nhưng DB đang ghi đè (env đang bị bỏ qua)."""
-    return sorted(field for field in _FIELDS if field in ENV_PROVIDED_FIELDS and field in _DB_PROVIDED_FIELDS)
-
-
 def log_config_sources() -> None:
     """In nguồn cấu hình đang có hiệu lực. Gọi một lần lúc khởi động, sau khi đã áp override."""
     for field in sorted(_FIELDS):
@@ -280,14 +253,6 @@ def log_config_sources() -> None:
         else:
             continue
         log.info("Config %s <- %s", field, origin)
-
-    shadowed = shadowed_env_fields()
-    if shadowed:
-        log.warning(
-            "The database overrides these environment variables, so editing .env changes nothing "
-            "until the stored value is cleared in Settings -> Models: %s",
-            ", ".join(env_var_name(field) for field in shadowed),
-        )
 
 
 def apply_overrides(settings: Settings, overrides: dict) -> None:
@@ -379,9 +344,6 @@ def effective_model_config() -> dict:
         "search_strategy": _settings.search_strategy,
         "search_top_k": _settings.search_top_k,
         "sag_language": _settings.sag_language,
-        # Nguồn của từng field + cờ "env đang bị bỏ qua". UI dựa vào đây để nói thẳng với người
-        # dùng rằng sửa `.env` sẽ không có tác dụng, thay vì để họ tự đoán.
-        "config_sources": config_sources(),
     }
 
 

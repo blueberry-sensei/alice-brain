@@ -356,24 +356,8 @@ export function ModelConfigForm() {
   const providerSpec =
     providers.find((provider) => provider.id === headEntry?.provider) ?? providers[0];
 
-  // Biến môi trường đang bị DB ghi đè. Không hiện ra thì người dùng sửa `.env`, restart, và chờ
-  // một thay đổi không bao giờ tới — DB thắng trong im lặng.
-  const shadowedEnvVars = Object.values(cfg.config_sources ?? {})
-    .filter((source) => source.env_ignored)
-    .map((source) => source.env_var)
-    .sort();
-
   return (
     <div className="flex flex-col gap-6">
-      {shadowedEnvVars.length > 0 && (
-        <Alert variant="destructive">
-          <AlertTitle>{t("envIgnoredTitle")}</AlertTitle>
-          <AlertDescription className="flex flex-col gap-1">
-            <span>{t("envIgnoredBody")}</span>
-            <code className="text-xs break-all">{shadowedEnvVars.join(", ")}</code>
-          </AlertDescription>
-        </Alert>
-      )}
       <SettingsSection title={t("generationTitle")} description={t("generationDescription")}>
         <SettingsRow title={t("chainTitle")} description={t("chainDescription")}>
           <ProviderChainEditor

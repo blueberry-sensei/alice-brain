@@ -19,7 +19,6 @@ import type {
   PortableConfigBundle,
   PortableConfigImportResult,
   PortableConfigKind,
-  ModelSetupStatus,
   KnowledgeMcpDescriptor,
   Persona,
   SearchResponse,
@@ -205,7 +204,8 @@ async function streamGlobalSearch(
 
   if (response.status === 401 && typeof window !== "undefined") {
     clearToken();
-    window.location.href = "/login";
+    // Không còn trang đăng nhập: nạp lại để `AppShell` mở phiên cục bộ mới.
+    window.location.reload();
   }
   if (!response.ok || !response.body) {
     clearStreamTimeout();
@@ -400,7 +400,8 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     !path.includes("/auth/")
   ) {
     clearToken();
-    window.location.href = "/login";
+    // Không còn trang đăng nhập: nạp lại để `AppShell` mở phiên cục bộ mới.
+    window.location.reload();
   }
 
   if (!res.ok) {
@@ -439,10 +440,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(b),
     }),
-  login: (b: { name: string; email?: string; password?: string }) =>
+  /**
+   * Mở phiên cục bộ cho brain này. Body rỗng: brain là một người dùng cho mỗi project trên máy
+   * của chính người đó, nên không có gì để hỏi trước khi vào. Identity đã có thì dùng lại,
+   * chưa có thì tạo — tên không bao giờ bị ghi đè.
+   */
+  startSession: () =>
     request<TokenResponse>("/api/v1/auth/login", {
       method: "POST",
-      body: JSON.stringify(b),
+      body: JSON.stringify({}),
     }),
   me: () => request<User>("/api/v1/auth/me"),
   capabilities: () => request<Capabilities>("/api/v1/system/capabilities"),
@@ -483,8 +489,6 @@ export const api = {
   getModelConfig: () => request<ModelConfig>("/api/v1/system/model-config"),
   getModelProviders: () =>
     request<ModelProviderSpec[]>("/api/v1/system/model-providers"),
-  modelSetupStatus: () =>
-    request<ModelSetupStatus>("/api/v1/system/model-setup"),
   saveModelConfig: (b: ModelConfigPatch) =>
     request<{ config: ModelConfig; capabilities: Capabilities }>(
       "/api/v1/system/model-config",

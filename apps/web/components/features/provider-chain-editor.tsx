@@ -224,9 +224,15 @@ export function ProviderChainEditor({
               {state === "cooldown" && (
                 <Badge variant="secondary" className="gap-1">
                   <Clock className="size-3" />
-                  {t("healthCooldown", {
-                    seconds: Math.ceil(entryHealth?.cooldown_remaining ?? 0),
-                  })}
+                  {/* Nghỉ do `Retry-After` của server có thể dài hàng chục phút; "1800s" là con
+                      số không ai đọc được, nên đổi sang phút ngay khi vượt một phút rưỡi. */}
+                  {(entryHealth?.cooldown_remaining ?? 0) > 90
+                    ? t("healthCooldownMinutes", {
+                        minutes: Math.ceil((entryHealth?.cooldown_remaining ?? 0) / 60),
+                      })
+                    : t("healthCooldown", {
+                        seconds: Math.ceil(entryHealth?.cooldown_remaining ?? 0),
+                      })}
                 </Badge>
               )}
 

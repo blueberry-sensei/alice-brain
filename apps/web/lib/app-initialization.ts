@@ -16,7 +16,6 @@ export const APP_INITIALIZATION_STORAGE_KEYS = Object.freeze({
   workspaceSection: "sag:workspace-section",
   legacyWorkspacePanel: "sag:workspace-panel",
   legacyWorkspaceMini: "sag:workspace-mini-mode",
-  quickModelSetupDismissed: "sag:onboarding:model-setup-dismissed:v1",
   themeBeforeExplore: "sag:theme-before-workspace-collapse",
 });
 
@@ -142,25 +141,4 @@ export function persistAppMode(
   if (section) {
     safelyWrite(storage, APP_INITIALIZATION_STORAGE_KEYS.workspaceSection, section);
   }
-}
-
-export function shouldShowQuickModelSetup(
-  required: boolean,
-  storage: InitializationStorage | null | undefined,
-) {
-  return required
-    && safelyRead(
-      storage,
-      APP_INITIALIZATION_STORAGE_KEYS.quickModelSetupDismissed,
-    ) !== "true";
-}
-
-export function dismissQuickModelSetup(
-  storage: InitializationStorage | null | undefined,
-) {
-  safelyWrite(
-    storage,
-    APP_INITIALIZATION_STORAGE_KEYS.quickModelSetupDismissed,
-    "true",
-  );
 }

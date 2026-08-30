@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from sag_api.core.errors import UpstreamError, ValidationError
+from sag_api.core.errors import ServiceUnavailableError, UpstreamError, ValidationError
 from sag_api.services.sub_agent_discovery import discover_sub_agent_models
 
 
@@ -180,3 +180,53 @@ async def test_opencode_returns_full_catalog_after_one_model_verifies():
         "good-key",
         transport=httpx.MockTransport(handler),
     ) == ["opencode/cheap-mini", "opencode/solid-pro"]
+
+
+@pytest.mark.asyncio
+async def test_per_minute_rate_limit_is_waited_out_not_reported_as_exhausted():
+    """429 kèm `Retry-After` ngắn là hạn mức theo PHÚT: chờ rồi thử lại, không bỏ cuộc.
+
+    Bản trước bỏ cuộc ngay ở lần 429 đầu tiên, nên một trần RPM mười giây bị người dùng đọc
+    thành "provider hết quota" và không bao giờ chọn được model.
+    """
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.01"}, text="rate limit")
+        return httpx.Response(200, json={"data": [{"id": "gpt-live"}]})
+
+    assert await discover_sub_agent_models(
+        "codex", "openai-key", transport=httpx.MockTransport(handler)
+    ) == ["gpt-live"]
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_long_rate_limit_reports_how_long_to_wait():
+    """`Retry-After` dài hơn ngân sách chờ là hạn mức theo giờ/ngày: trả lỗi kèm con số thật."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "3600"}, text="quota exceeded")
+
+    with pytest.raises(ServiceUnavailableError) as error:
+        await discover_sub_agent_models(
+            "codex", "openai-key", transport=httpx.MockTransport(handler)
+        )
+    assert error.value.code == "sub_agent_provider_rate_limited"
+    # Người dùng phải đọc được "60 phút" chứ không phải "hãy thử lại sau".
+    assert "60 phút" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_opencode_probe_treats_rate_limit_as_a_valid_key():
+    """Gateway chỉ đếm hạn mức SAU khi nhận key, nên 429 ở probe nghĩa là key đã qua auth."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/chat/completions"):
+            return httpx.Response(429, headers={"Retry-After": "3600"}, text="too many requests")
+        return httpx.Response(200, json={"data": [{"id": "zen-live"}]})
+
+    assert await discover_sub_agent_models(
+        "opencode-zen", "good-key", transport=httpx.MockTransport(handler)
+    ) == ["opencode/zen-live"]

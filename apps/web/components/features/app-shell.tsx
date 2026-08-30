@@ -10,16 +10,14 @@ import { motion } from "motion/react";
 import { toast } from "sonner";
 
 import { api, ApiError } from "@/lib/api";
-import { clearToken, getToken } from "@/lib/auth";
+import { clearToken, getToken, setToken } from "@/lib/auth";
 import {
   APP_INITIALIZATION_DEFAULTS,
-  dismissQuickModelSetup,
   persistAppMode,
   readInitialAppState,
   rememberThemeBeforeExplore,
   resolveThemePreference,
   restoreThemeAfterExplore,
-  shouldShowQuickModelSetup,
   type AppMode,
   type ThemePreference,
 } from "@/lib/app-initialization";
@@ -66,7 +64,6 @@ import {
 } from "@/components/features/detail-panel";
 import { KnowledgeProvider } from "@/components/features/knowledge-provider";
 import { AgentAvatar } from "@/components/features/agent-avatar";
-import { QuickModelSetupDialog } from "@/components/features/quick-model-setup-dialog";
 import { SearchProvider } from "@/components/features/search/search-provider";
 import { SpaceBackdrop } from "@/components/features/space-backdrop";
 import { SiteHeader } from "@/components/features/site-header";
@@ -119,7 +116,6 @@ interface AppCtx {
   enterExploreMode: (section?: WorkspaceSection) => void;
   exitExploreMode: () => void;
   openSettings: (tab?: SettingsTab, section?: string) => void;
-  logout: () => void;
   refreshCapabilities: () => Promise<void>;
   timezone: string;
   updateTimezone: (timezone: string) => Promise<void>;
@@ -145,7 +141,6 @@ const AppContext = React.createContext<AppCtx>({
   enterExploreMode: () => {},
   exitExploreMode: () => {},
   openSettings: () => {},
-  logout: () => {},
   refreshCapabilities: async () => {},
   timezone: DEFAULT_TIME_ZONE,
   updateTimezone: async () => {},
@@ -194,7 +189,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [loading, setLoading] = React.useState(true);
-  const [quickSetupOpen, setQuickSetupOpen] = React.useState(false);
   const [timezone, setTimezone] = React.useState(DEFAULT_TIME_ZONE);
   const sidebarOpenRef = React.useRef(true);
   const restoreSidebarOpenRef = React.useRef<boolean | null>(null);
@@ -403,15 +397,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     let alive = true;
     (async () => {
-      if (!getToken()) {
-        router.replace("/login");
-        return;
-      }
       try {
-        const [u, c, setup, preferences] = await Promise.all([
+        // Brain là một người dùng cho mỗi project, chạy trên máy của chính người đó. Không có
+        // gì để hỏi trước khi vào, nên phiên được mở ngay tại đây thay vì qua một trang nhập tên.
+        if (!getToken()) {
+          const session = await api.startSession();
+          setToken(session.access_token);
+        }
+        const [u, c, preferences] = await Promise.all([
           api.me(),
           api.capabilities(),
-          api.modelSetupStatus().catch(() => null),
           api.getSystemPreferences().catch(() => null),
         ]);
         let effectiveTimezone = preferences?.timezone_configured
@@ -429,15 +424,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setUser(u);
         setCapabilities({ ...c, timezone: effectiveTimezone });
         setTimezone(effectiveTimezone);
-        setQuickSetupOpen(
-          shouldShowQuickModelSetup(Boolean(setup?.required), window.localStorage),
-        );
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
-          clearToken();
-          router.replace("/login");
-          return;
-        }
+        // Token cũ không còn hợp lệ (đổi SAG_SECRET_KEY, xoá DB): bỏ nó đi và mở phiên mới
+        // ở lần render sau. Không có trang đăng nhập để đẩy người dùng sang.
+        if (e instanceof ApiError && e.status === 401) clearToken();
       } finally {
         if (alive) setLoading(false);
       }
@@ -445,7 +435,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [router]);
+  }, []);
 
   // The shortcut enters exploration mode directly and opens the matching compact workspace.
   React.useEffect(() => {
@@ -458,11 +448,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [enterExploreMode]);
-
-  const logout = React.useCallback(() => {
-    clearToken();
-    router.replace("/login");
-  }, [router]);
 
   if (loading) return <FullLoader />;
   if (!user) return null;
@@ -489,7 +474,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         enterExploreMode,
         exitExploreMode,
         openSettings,
-        logout,
         refreshCapabilities,
         timezone,
         updateTimezone,
@@ -504,18 +488,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <KnowledgeProvider>
           <>
-            <QuickModelSetupDialog
-              open={quickSetupOpen}
-              onOpenChange={(nextOpen) => {
-                setQuickSetupOpen(nextOpen);
-                if (!nextOpen) dismissQuickModelSetup(window.localStorage);
-              }}
-              onConfigured={(nextCapabilities) => {
-                setCapabilities(nextCapabilities);
-                setTimezone(nextCapabilities.timezone || DEFAULT_TIME_ZONE);
-                setQuickSetupOpen(false);
-              }}
-            />
             <DetailPanelProvider>
               <div
                 className={cn(

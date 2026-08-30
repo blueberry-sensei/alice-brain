@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable
 
 import httpx
 
 from sag_api.core.errors import ServiceUnavailableError, UpstreamError, ValidationError
+from sag_api.core.retry_after import describe_wait, retry_after_seconds
 from sag_api.core.sub_agent_providers import (
     DiscoverableSubAgentProviderId,
     get_sub_agent_provider,
@@ -28,6 +30,19 @@ _OPENCODE_MODEL_PREFIXES = {
 _OPENCODE_CHEAP_HINTS = ("-free", "flash", "nano", "mini", "lite", "haiku")
 _OPENCODE_PROBE_ATTEMPTS = 3
 
+# 429 ở đây phần lớn là hạn mức theo PHÚT: bấm "xác thực key" hai lần liên tiếp, hoặc dùng chung
+# key với một job đang chạy, là đủ chạm trần RPM. Bản trước bỏ cuộc ngay ở lần 429 đầu tiên nên
+# một hạn mức mười giây bị người dùng đọc thành "provider hết quota". Nên: chờ đúng con số server
+# nói rồi thử lại, và chỉ bỏ cuộc khi con số đó dài hơn mức đáng để một request HTTP ngồi đợi.
+_RATE_LIMIT_RETRIES = 2
+#: Không có `Retry-After` thì đoán; đủ để qua một cửa sổ RPM mà không giữ request quá lâu.
+_RATE_LIMIT_FALLBACK_WAIT = 5.0
+#: Tổng thời gian được phép NGỦ trong một lần discovery. Đây là endpoint người dùng đang ngồi
+#: nhìn, nên trần phải là trần của cả lượt, không phải của từng lần chờ: `Retry-After` dài hơn
+#: phần ngân sách còn lại nghĩa là hạn mức theo giờ/ngày — trả lỗi kèm đúng số giờ phải chờ
+#: tử tế hơn là giữ trình duyệt treo.
+_RATE_LIMIT_WAIT_BUDGET = 20.0
+
 
 def _unique_strings(values: Iterable[object]) -> list[str]:
     seen: set[str] = set()
@@ -42,6 +57,46 @@ def _unique_strings(values: Iterable[object]) -> list[str]:
     return result
 
 
+def rate_limited_error(response: httpx.Response, provider: str) -> ServiceUnavailableError:
+    """429 mà chờ tại chỗ không giải quyết được: nói rõ phải chờ bao lâu.
+
+    "hãy thử lại sau" không giúp được ai. Người dùng cần biết đây là mười giây nữa hay một
+    tiếng nữa mới quyết định được là chờ hay đi đổi key.
+    """
+    wait = describe_wait(retry_after_seconds(response))
+    detail = f"; {provider} yêu cầu chờ {wait}" if wait else "; hãy thử lại sau ít phút"
+    return ServiceUnavailableError(
+        f"{provider} đang giới hạn request{detail}",
+        code="sub_agent_provider_rate_limited",
+    )
+
+
+async def _send_with_rate_limit_retry(
+    send: Callable[[], Awaitable[httpx.Response]],
+    provider: str,
+) -> httpx.Response:
+    """Gửi request, và chờ đúng bằng `Retry-After` khi bị 429 theo phút.
+
+    Trả về response cuối cùng (kể cả khi vẫn 429) để chỗ gọi tự quyết định — probe của OpenCode
+    phân loại 429 khác với endpoint `/models`.
+    """
+    response = await send()
+    budget = _RATE_LIMIT_WAIT_BUDGET
+    for _ in range(_RATE_LIMIT_RETRIES):
+        if response.status_code != 429:
+            return response
+        wait = retry_after_seconds(response)
+        if wait is None:
+            wait = _RATE_LIMIT_FALLBACK_WAIT
+        if wait > budget:
+            # Hạn mức theo giờ/ngày. Chờ tiếp là treo, không phải kiên nhẫn.
+            return response
+        budget -= wait
+        await asyncio.sleep(wait)
+        response = await send()
+    return response
+
+
 def _raise_for_provider_response(response: httpx.Response, provider: str) -> None:
     if response.status_code in {401, 403}:
         # Đây là credential của provider ngoài, không phải SAG session. Trả 401 ở đây sẽ làm
@@ -51,10 +106,7 @@ def _raise_for_provider_response(response: httpx.Response, provider: str) -> Non
             code="sub_agent_credential_invalid",
         )
     if response.status_code == 429:
-        raise ServiceUnavailableError(
-            f"{provider} đang giới hạn request; hãy thử lại sau",
-            code="sub_agent_provider_rate_limited",
-        )
+        raise rate_limited_error(response, provider)
     if response.status_code >= 400:
         raise UpstreamError(
             f"{provider} trả HTTP {response.status_code} khi lấy model",
@@ -89,7 +141,10 @@ async def _discover_anthropic(client: httpx.AsyncClient, credential: str) -> lis
         params: dict[str, str | int] = {"limit": 1000}
         if after_id:
             params["after_id"] = after_id
-        response = await client.get(_ANTHROPIC_MODELS_URL, headers=headers, params=params)
+        response = await _send_with_rate_limit_retry(
+            lambda params=params: client.get(_ANTHROPIC_MODELS_URL, headers=headers, params=params),
+            "Claude",
+        )
         _raise_for_provider_response(response, "Claude")
         payload = _json_object(response, "Claude")
         page = payload.get("data")
@@ -108,9 +163,9 @@ async def _discover_anthropic(client: httpx.AsyncClient, credential: str) -> lis
 
 
 async def _discover_openai(client: httpx.AsyncClient, credential: str) -> list[str]:
-    response = await client.get(
-        _OPENAI_MODELS_URL,
-        headers={"Authorization": f"Bearer {credential}"},
+    response = await _send_with_rate_limit_retry(
+        lambda: client.get(_OPENAI_MODELS_URL, headers={"Authorization": f"Bearer {credential}"}),
+        "Codex",
     )
     _raise_for_provider_response(response, "Codex")
     payload = _json_object(response, "Codex")
@@ -124,10 +179,13 @@ async def _discover_openai(client: httpx.AsyncClient, credential: str) -> list[s
 
 
 async def _discover_gemini(client: httpx.AsyncClient, credential: str) -> list[str]:
-    response = await client.get(
-        _GEMINI_MODELS_URL,
-        headers={"x-goog-api-key": credential},
-        params={"pageSize": 1000},
+    response = await _send_with_rate_limit_retry(
+        lambda: client.get(
+            _GEMINI_MODELS_URL,
+            headers={"x-goog-api-key": credential},
+            params={"pageSize": 1000},
+        ),
+        "Gemini CLI",
     )
     _raise_for_provider_response(response, "Gemini CLI")
     payload = _json_object(response, "Gemini CLI")
@@ -210,14 +268,17 @@ async def _verify_opencode_credential(
     last_status: int | None = None
     last_detail = ""
     for model in _opencode_probe_candidates(catalog):
-        probe = await client.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 1,
-            },
+        probe = await _send_with_rate_limit_retry(
+            lambda model=model: client.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+            ),
+            name,
         )
         if probe.status_code == 200:
             return
@@ -233,10 +294,10 @@ async def _verify_opencode_credential(
             last_detail = _short_detail(probe)
             continue
         if probe.status_code == 429:
-            raise ServiceUnavailableError(
-                f"{name} đang giới hạn request; hãy thử lại sau",
-                code="sub_agent_provider_rate_limited",
-            )
+            # Gateway chỉ đếm hạn mức SAU khi đã nhận key, nên 429 ở đây trả lời đúng câu hỏi
+            # mà probe đặt ra: key này được chấp nhận. Không có lý do bắt người dùng ngồi chờ
+            # hết cửa sổ RPM rồi mới cho chọn model.
+            return
         last_status = probe.status_code
         last_detail = _short_detail(probe)
 
@@ -260,7 +321,7 @@ async def _discover_opencode(
 
     # /models của OpenCode là catalog công khai (curl không kèm key vẫn trả 200), nên tự nó
     # KHÔNG chứng minh key đúng. Lấy catalog trước chỉ để biết probe bằng model nào.
-    response = await client.get(models_url, headers=headers)
+    response = await _send_with_rate_limit_retry(lambda: client.get(models_url, headers=headers), name)
     _raise_for_provider_response(response, name)
     payload = _json_object(response, name)
     data = payload.get("data")

@@ -16,6 +16,7 @@ from sag_api.core.errors import (
     UpstreamError,
     ValidationError,
 )
+from sag_api.core.retry_after import describe_wait, retry_after_seconds
 from sag_api.core.sub_agent_providers import SUB_AGENT_PROVIDERS, get_sub_agent_provider
 from sag_api.core.telemetry import LLMCallRecord, emit_llm_call
 from sag_api.services import settings_service
@@ -179,8 +180,11 @@ def _raise_for_response(response: httpx.Response, display_name: str) -> None:
             code="sub_agent_credential_invalid",
         )
     if response.status_code == 429:
+        # 429 theo phút và 429 hết quota ngày dùng chung một mã. Con số của server là thứ duy
+        # nhất phân biệt được hai cái, nên đưa thẳng vào message thay vì "thử lại sau".
+        wait = describe_wait(retry_after_seconds(response))
         raise ServiceUnavailableError(
-            f"{display_name} đang giới hạn request",
+            f"{display_name} đang giới hạn request" + (f"; cần chờ {wait}" if wait else ""),
             code="sub_agent_provider_rate_limited",
         )
     raise UpstreamError(
