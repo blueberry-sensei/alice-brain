@@ -19,17 +19,24 @@ from sag_api.parsing.text import (
 )
 from sag_api.sag import EngineManager
 from sag_api.schemas.common import Ok
-from sag_api.schemas.document import DocumentOut, IngestRequest
+from sag_api.schemas.document import (
+    DocumentOut,
+    ExtractedIngestRequest,
+    IngestRequest,
+    OriginUpdateRequest,
+)
 from sag_api.schemas.job import JobOut
 from sag_api.services.document_service import (
     create_document_from_upload,
     delete_document,
     get_document,
     ingest_content,
+    ingest_extracted,
     list_documents,
     pause_document,
     reprocess_document,
     resume_document,
+    update_origins,
 )
 from sag_api.services.source_service import get_source
 
@@ -104,6 +111,48 @@ async def ingest(
         job_queue=job_queue,
     )
     return DocumentOut.model_validate(document)
+
+
+@router.post("/ingest-extracted", response_model=DocumentOut, status_code=201)
+async def ingest_extracted_(
+    source_id: str,
+    body: ExtractedIngestRequest,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    job_queue: JobQueue = Depends(get_job_queue),
+    engine_manager: EngineManager = Depends(get_engine_manager),
+) -> DocumentOut:
+    """Write text with its events already extracted by the caller; the server only chunks and embeds."""
+    source = await get_source(session, source_id)
+    known = await engine_manager.entity_type_names(source.sag_source_config_id, source=source)
+    unknown = sorted({entity.type for event in body.events for entity in event.entities} - known)
+    if unknown:
+        raise ValidationError(f"Unknown entity type(s) {unknown}; this source accepts {sorted(known)}")
+    document = await ingest_extracted(
+        session,
+        source,
+        title=body.title,
+        text=body.text,
+        origin_path=body.origin_path,
+        origin_line=body.origin_line,
+        events=[event.model_dump() for event in body.events],
+        upload_dir=settings.upload_dir,
+        job_queue=job_queue,
+    )
+    return DocumentOut.model_validate(document)
+
+
+@router.post("/origins", response_model=Ok)
+async def move_origins(
+    source_id: str,
+    body: OriginUpdateRequest,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Ok:
+    """Update where documents start in their origin file after unrelated edits shifted it."""
+    source = await get_source(session, source_id)
+    moved = await update_origins(session, source, [item.model_dump() for item in body.items])
+    return Ok(detail=f"{moved} document origin(s) moved")
 
 
 @router.get("/{document_id}", response_model=DocumentOut)

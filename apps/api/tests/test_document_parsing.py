@@ -144,8 +144,11 @@ async def test_document_job_sends_parsed_markdown_to_engine(monkeypatch):
             should_pause,
             max_concurrency,
             document_title,
+            article_id,
         ):
             self.seen_path = path
+            # The engine id is recorded before the loader writes anything under it.
+            assert article_id and document.sag_source_id == article_id == checkpoint.source_id
             assert max_concurrency == tasks.settings.document_extract_concurrency
             assert document_title == "original"
             await on_stage("loading")

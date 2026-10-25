@@ -328,16 +328,12 @@ class GetEntityTool(Tool):
             return ToolResult(
                 content="(Không tìm thấy thực thể)" if language == "vi" else "(Entity not found)"
             )
-        lowered = name.lower()
         for source in ctx.sources:
             scid = source.sag_source_config_id
-            entities = await ctx.engine_manager.list_entities(scid, source=source, limit=200)
-            match = next((e for e in entities if (e.name or "").lower() == lowered), None)
-            if match is None:
-                match = next((e for e in entities if lowered in (e.name or "").lower()), None)
+            match = await ctx.engine_manager.find_entity(scid, name, source=source)
             if match is not None:
                 snippets = await ctx.engine_manager.entity_context(scid, match.id, source=source, limit=6)
-                body = "\n\n".join(snippets) if snippets else match.description or ""
+                body = "\n\n".join(snippet.text for snippet in snippets) if snippets else match.description or ""
                 entity_label = "Thực thể" if language == "vi" else "Entity"
                 return ToolResult(
                     content=f"{entity_label} “{match.name}” ({match.type}):\n{body}".strip(),

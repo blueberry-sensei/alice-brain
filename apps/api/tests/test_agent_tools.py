@@ -115,7 +115,7 @@ async def test_search_tool_prefers_exact_body_window_over_semantic_boilerplate()
                 ],
             )
 
-        async def grep_chunks(self, source_config_id, pattern, *, source=None, limit=20):
+        async def grep_chunks(self, source_config_id, pattern, *, source=None, limit=20, also=()):
             assert pattern == "\u6797\u4fca\u6770"
             return [
                 {

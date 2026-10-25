@@ -51,12 +51,18 @@ MCP_TOOL_DETAILS: tuple[MCPToolDetail, ...] = (
     {
         "name": "get_entity",
         "label": "Look up entity",
-        "description": "Find a person, organisation or concept and summarise the context around it in the material.",
+        "description": (
+            "Find a person, organisation, concept or identifier and list the events around it in the "
+            "material, each with its citation."
+        ),
     },
     {
         "name": "list_documents",
         "label": "List documents",
-        "description": "List documents with their processing status and chunk counts, and obtain document_id.",
+        "description": (
+            "List documents with their processing status and chunk counts, and obtain document_id. "
+            "Synced knowledge is summarised per file; pass path to list that file's entries."
+        ),
     },
     {
         "name": "outline",
@@ -271,7 +277,9 @@ def _source_title(source: Source) -> str:
     return f"{source.name}（source_id={source.id}）"
 
 
-def _sections_to_text(sections: list, sources: tuple[Source, ...]) -> str:
+def _sections_to_text(
+    sections: list, sources: tuple[Source, ...], citations: dict[str, str] | None = None
+) -> str:
     if not sections:
         return "(no related material)"
     by_config = {source.sag_source_config_id: source for source in sources}
@@ -284,10 +292,92 @@ def _sections_to_text(sections: list, sources: tuple[Source, ...]) -> str:
         source = by_config.get(getattr(section, "source_config_id", None))
         source = source or by_id.get(getattr(section, "source_id", None))
         source_line = f"Source: {_source_title(source)}\n" if source and len(sources) > 1 else ""
+        cite = (citations or {}).get(chunk_id)
+        cite_line = f"Cite: {cite}\n" if cite else ""
         blocks.append(
-            f"[{index}] {heading}{tag}\n{source_line}{getattr(section, 'content', '')}"
+            f"[{index}] {heading}{tag}\n{source_line}{cite_line}{getattr(section, 'content', '')}"
         )
     return "\n\n".join(blocks)
+
+
+def _cite(document: Document | None, line: int | None) -> str:
+    """`path:line · id=<document>`; synced knowledge cites its own file, uploads cite the stored copy."""
+    if document is None:
+        return ""
+    if document.origin_path:
+        return f"{document.origin_path}:{(document.origin_line or 1) + (line or 1) - 1} · id={document.id}"
+    location = f"{document.filename}:{line}" if line else document.filename
+    return f"{location} · id={document.id}"
+
+
+async def _documents_by_article(
+    scope: MCPScope, article_ids: Iterable[str | None]
+) -> dict[str, Document]:
+    """alicecore article id -> the visible Document it was ingested from."""
+    from sqlalchemy import select
+
+    from sag_api.core.db import SessionLocal
+    from sag_api.db.models import Document
+
+    ids = [value for value in dict.fromkeys(article_ids) if value]
+    if not ids:
+        return {}
+    async with SessionLocal() as session:
+        rows = (
+            await session.scalars(
+                select(Document).where(
+                    Document.sag_source_id.in_(ids),
+                    Document.source_id.in_([source.id for source in scope.sources]),
+                )
+            )
+        ).all()
+    return {document.sag_source_id: document for document in rows}
+
+
+def _stored_lines(document: Document) -> list[str]:
+    try:
+        with open(document.storage_path, encoding="utf-8", errors="replace") as file:
+            return file.read().lower().splitlines()
+    except OSError:
+        return []
+
+
+def _first_line_with(lines: list[str], start: int, needle: str) -> int:
+    """Line (1-based) of the first ``needle`` at or after ``start`` in lowercased stored lines."""
+    lowered = needle.lower()
+    for number in range(max(start, 1), len(lines) + 1):
+        if lowered in lines[number - 1]:
+            return number
+    return start  # the match spans lines or the copy is gone: the chunk start still holds it
+
+
+async def _chunk_citations(
+    scope: MCPScope, chunks: Iterable[tuple[str | None, str | None]], needle: str = ""
+) -> dict[str, str]:
+    """(source_config_id, chunk_id) pairs -> chunk_id: citation; with ``needle``, the line of its match."""
+    by_config: dict[str, list[str]] = {}
+    for config_id, chunk_id in chunks:
+        if config_id and chunk_id:
+            by_config.setdefault(config_id, []).append(chunk_id)
+    sources = {source.sag_source_config_id: source for source in scope.sources}
+    located: dict[str, tuple[str, int | None]] = {}
+    for config_id, chunk_ids in by_config.items():
+        located.update(
+            await scope.engine_manager.chunk_lines(config_id, chunk_ids, source=sources.get(config_id))
+        )
+    documents = await _documents_by_article(scope, (article for article, _ in located.values()))
+    stored: dict[str, list[str]] = {}
+    if needle:
+        for article_id in {article for article, line in located.values() if line and article in documents}:
+            stored[article_id] = await asyncio.to_thread(_stored_lines, documents[article_id])
+    return {
+        chunk_id: _cite(
+            documents[article_id],
+            _first_line_with(stored[article_id], line, needle) if article_id in stored and line else line,
+        )
+        for chunk_id, (article_id, line) in located.items()
+        if article_id in documents
+    }
 
 
 async def _document_in_scope(
@@ -364,7 +454,10 @@ def build_source_mcp(
             normalized,
             top_k=max(1, min(top_k, 50)),
         )
-        return _sections_to_text(outcome.sections, selected)
+        citations = await _chunk_citations(
+            scope, ((section.source_config_id, section.chunk_id) for section in outcome.sections)
+        )
+        return _sections_to_text(outcome.sections, selected, citations)
 
     @mcp.tool(
         title=MCP_TOOL_LABELS["get_entity"],
@@ -390,31 +483,24 @@ def build_source_mcp(
         async def _one(source: Source) -> str | None:
             try:
                 scid = source.sag_source_config_id
-                entities = await scope.engine_manager.list_entities(
-                    scid, source=source, limit=200
-                )
-                lowered = target.lower()
-                match = next(
-                    (entity for entity in entities if (entity.name or "").lower() == lowered),
-                    None,
-                )
-                if match is None:
-                    match = next(
-                        (
-                            entity
-                            for entity in entities
-                            if lowered in (entity.name or "").lower()
-                        ),
-                        None,
-                    )
+                match = await scope.engine_manager.find_entity(scid, target, source=source)
                 if match is None:
                     return None
                 snippets = await scope.engine_manager.entity_context(
-                    scid, match.id, source=source, limit=6
+                    scid, match.id, source=source, limit=12
                 )
-                body = "\n\n".join(snippets) if snippets else (match.description or "")
+                documents = await _documents_by_article(
+                    scope, (snippet.article_id for snippet in snippets)
+                )
+                lines = []
+                for snippet in snippets:
+                    cite = _cite(documents.get(snippet.article_id), snippet.line)
+                    lines.append(f"- [{cite}] {snippet.text}" if cite else f"- {snippet.text}")
+                body = "\n".join(lines) if lines else (match.description or "")
                 prefix = f"Source: {_source_title(source)}\n" if len(selected) > 1 else ""
-                return f"{prefix}Entity \"{match.name}\" ({match.type}):\n{body}".strip()
+                return (
+                    f"{prefix}Entity \"{match.name}\" ({match.type}, {match.heat} events):\n{body}"
+                ).strip()
             except Exception:
                 return None
 
@@ -428,7 +514,18 @@ def build_source_mcp(
         annotations=READ_ONLY_TOOL_ANNOTATIONS,
     )
     @_traced("list_documents")
-    async def list_documents(source_id: SourceId = "") -> str:
+    async def list_documents(
+        source_id: SourceId = "",
+        path: Annotated[
+            str,
+            Field(
+                description=(
+                    "Optional. A synced knowledge file such as decisions/LOG.md: list its entries "
+                    "one by one. Without it, each synced file is one summary line."
+                )
+            ),
+        ] = "",
+    ) -> str:
         scope = _require_scope()
         selected = _selected_sources(scope, source_id)
         if not selected:
@@ -456,20 +553,46 @@ def build_source_mcp(
         by_source: dict[str, list[Document]] = {item.id: [] for item in selected}
         for document in documents:
             by_source.setdefault(document.source_id, []).append(document)
+        wanted_path = (path or "").strip()
         blocks = []
         for source in selected:
             rows = by_source.get(source.id) or []
-            if not rows:
-                continue
             lines = []
+            files: dict[str, list[Document]] = {}
             for document in rows:
+                if document.origin_path:
+                    files.setdefault(document.origin_path, []).append(document)
+                    continue
+                if wanted_path:
+                    continue
                 status = getattr(document.status, "value", document.status)
                 lines.append(
                     f"- {document.filename} · id={document.id} · {status} · "
                     f"{document.chunk_count} chunks"
                 )
+            for file_path, entries in sorted(files.items()):
+                if wanted_path and file_path != wanted_path:
+                    continue
+                if wanted_path:
+                    for document in sorted(entries, key=lambda item: item.origin_line or 0):
+                        status = getattr(document.status, "value", document.status)
+                        lines.append(
+                            f"- {document.filename} · {file_path}:{document.origin_line} · "
+                            f"id={document.id} · {status}"
+                        )
+                    continue
+                counts: dict[str, int] = {}
+                for document in entries:
+                    status = str(getattr(document.status, "value", document.status))
+                    counts[status] = counts.get(status, 0) + 1
+                summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
+                lines.append(f"- {file_path} · {len(entries)} entries ({summary})")
+            if not lines:
+                continue
             header = f"## {_source_title(source)}\n" if len(selected) > 1 else ""
             blocks.append(header + "\n".join(lines))
+        if not blocks:
+            return f"(no synced entries for {wanted_path})" if wanted_path else "(the knowledge base has no documents yet)"
         return "\n\n".join(blocks)
 
     @mcp.tool(
@@ -493,9 +616,13 @@ def build_source_mcp(
         )
         if not rows:
             return "(no outline yet: the document may still be processing)"
+        lines = await scope.engine_manager.chunk_lines(
+            source.sag_source_config_id, [row["chunk_id"] for row in rows], source=source
+        )
         return "\n".join(
             f"{row['rank']:>3}. {row['heading'] or '(untitled chunk)'}"
             f"（chunk_id={row['chunk_id']}）"
+            + (f" {_cite(document, lines[row['chunk_id']][1])}" if row["chunk_id"] in lines else "")
             for row in rows
         )
 
@@ -537,15 +664,26 @@ def build_source_mcp(
                 return []
 
         results = await asyncio.gather(*(_one(source) for source in selected))
+        citations = await _chunk_citations(
+            scope,
+            (
+                (source.sag_source_config_id, row["chunk_id"])
+                for source, rows in zip(selected, results, strict=True)
+                for row in rows
+            ),
+            needle,
+        )
         blocks = []
         for source, rows in zip(selected, results, strict=True):
             for row in rows:
                 source_line = (
                     f"Source: {_source_title(source)}\n" if len(selected) > 1 else ""
                 )
+                cite = citations.get(row["chunk_id"])
+                cite_line = f"Cite: {cite}\n" if cite else ""
                 blocks.append(
                     f"{row['heading'] or 'Snippet'} (chunk_id={row['chunk_id']})\n"
-                    f"{source_line}{row['snippet']}"
+                    f"{source_line}{cite_line}{row['snippet']}"
                 )
                 if len(blocks) >= bounded_limit:
                     break
@@ -565,7 +703,12 @@ def build_source_mcp(
         document_id: DocumentId,
         offset: Annotated[
             int,
-            Field(description="Line to start reading from; the first line is 1, default 1."),
+            Field(
+                description=(
+                    "Line to start reading from; the first line is 1, default 1. For synced knowledge "
+                    "this is the line number in its own file, as printed by Cite."
+                )
+            ),
         ] = 1,
         limit: Annotated[
             int,
@@ -586,15 +729,17 @@ def build_source_mcp(
                 lines = file.readlines()
         except OSError:
             return "(failed to read the file)"
-        start = max(0, offset - 1)
+        # Synced knowledge is numbered by its own file so `read` agrees with Cite.
+        first = document.origin_line if document.origin_path and document.origin_line else 1
+        start = max(0, offset - first)
         page = lines[start : start + max(1, min(limit, 500))]
         if not page:
-            return f"(out of range: the text has {len(lines)} lines in total)"
-        body = "".join(f"{start + index + 1:>5}\t{line}" for index, line in enumerate(page))
+            return f"(out of range: {document.filename} has lines {first}-{first + len(lines) - 1})"
+        body = "".join(f"{first + start + index:>5}\t{line}" for index, line in enumerate(page))
         source_line = f"Source: {_source_title(source)}\n" if len(scope.sources) > 1 else ""
         return (
-            f"{document.filename} - lines {start + 1}-{start + len(page)} / "
-            f"{len(lines)} total\n{source_line}{body}"
+            f"{document.filename} - lines {first + start}-{first + start + len(page) - 1}"
+            f" of {first}-{first + len(lines) - 1}\n{source_line}{body}"
         )
 
     @mcp.tool(
@@ -628,6 +773,9 @@ def build_source_mcp(
         source, chunk = found
         heading = (chunk.heading or "").strip()
         body = f"{heading}\n\n{chunk.content}".strip() if heading else chunk.content
+        cite = (await _chunk_citations(scope, [(source.sag_source_config_id, cid)])).get(cid)
+        if cite:
+            body = f"Cite: {cite}\n\n{body}"
         return f"Source: {_source_title(source)}\n\n{body}" if len(selected) > 1 else body
 
     @mcp.tool(

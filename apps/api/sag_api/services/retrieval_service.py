@@ -293,6 +293,7 @@ async def _lexical_sections(
                     term,
                     source=source,
                     limit=2,
+                    also=tuple(other for other in terms if other != term),
                 )
             except Exception:  # noqa: BLE001
                 return []

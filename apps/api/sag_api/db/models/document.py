@@ -31,3 +31,6 @@ class Document(IDMixin, TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # source_id returned by the alicecore ingest (used for provenance)
     sag_source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Where the stored text starts in the client's own file, for `path:line` citations
+    origin_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    origin_line: Mapped[int | None] = mapped_column(Integer, nullable=True)

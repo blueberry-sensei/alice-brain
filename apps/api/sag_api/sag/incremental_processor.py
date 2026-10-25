@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from bisect import bisect_right
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -193,6 +194,20 @@ def _normalize_extraction_response(response: Any, allowed_types: set[str]) -> in
     return normalized
 
 
+def chunk_start_lines(bodies: list[str], text: str) -> list[int]:
+    """1-based line in ``text`` where each chunk body (in rank order) starts; chunks may split mid-line."""
+    starts: list[int] = []
+    cursor = 0
+    for index, body in enumerate(bodies):
+        first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        position = text.find(first[:40], cursor) if first else -1
+        if position < 0:
+            raise RuntimeError(f"Chunk {index} does not start with text from the stored document")
+        starts.append(text.count("\n", 0, position) + 1)
+        cursor = position + 1
+    return starts
+
+
 def _first_task_error(group: BaseExceptionGroup) -> Exception:
     for error in group.exceptions:
         if isinstance(error, BaseExceptionGroup):
@@ -230,6 +245,7 @@ class IncrementalDocumentProcessor:
         on_checkpoint: CheckpointCallback,
         should_pause: PauseCheck,
         on_stage: StageCallback | None = None,
+        article_id: str | None = None,
     ) -> ProcessOutcome:
         current = checkpoint.model_copy(deep=True)
         if not current.chunk_ids:
@@ -245,6 +261,7 @@ class IncrementalDocumentProcessor:
             loaded = await loader.load(
                 DocumentLoadConfig(
                     path=str(path),
+                    article_id=article_id,
                     source_config_id=self._source_config_id,
                     max_tokens=self._chunk_max_tokens,
                     chunk_mode=self._chunk_mode,
@@ -287,6 +304,72 @@ class IncrementalDocumentProcessor:
             token_usage=current.token_usage,
             paused=paused,
         )
+
+    async def process_extracted(
+        self, path: str | Path, events: list[dict], *, article_id: str
+    ) -> ProcessOutcome:
+        """Chunk + embed the document as ``article_id``, then store the client's events on the chunks holding their lines."""
+        loaded = await DocumentLoader().load(
+            DocumentLoadConfig(
+                path=str(path),
+                article_id=article_id,
+                source_config_id=self._source_config_id,
+                max_tokens=self._chunk_max_tokens,
+                chunk_mode=self._chunk_mode,
+            )
+        )
+        text = Path(path).read_text(encoding="utf-8")
+        chunk_ids, starts = await self._record_chunk_lines(list(loaded.chunk_ids or []), text)
+        if not chunk_ids:
+            raise RuntimeError("The document produced no chunk, so its events have nowhere to live")
+
+        items: dict[str, list[dict]] = {}
+        for event in events:
+            # Lines before the first chunk are blank lines the chunker dropped.
+            index = max(0, bisect_right(starts, event["line"]) - 1)
+            items.setdefault(chunk_ids[index], []).append(event)
+
+        template = getattr(self._engine, "_extractor", None)
+        if template is None:
+            raise RuntimeError("The extraction engine is not initialised yet")
+        extractor = EventExtractor(
+            prompt_manager=template.prompt_manager,
+            model_config=template.model_config,
+        )
+        saved = await extractor.save_events(
+            ExtractConfig(source_config_id=self._source_config_id, chunk_ids=list(items)),
+            items,
+        )
+        event_ids = [event.id for event in saved]
+        return ProcessOutcome(
+            source_id=getattr(loaded, "source_id", None),
+            chunk_count=len(chunk_ids),
+            event_count=len(event_ids),
+            chunk_ids=chunk_ids,
+            event_ids=event_ids,
+            processed_chunk_ids=chunk_ids,
+            eventless_chunk_ids=[chunk_id for chunk_id in chunk_ids if chunk_id not in items],
+        )
+
+    async def _record_chunk_lines(self, chunk_ids: list[str], text: str) -> tuple[list[str], list[int]]:
+        """Store each chunk's start line (1-based, inside ``text``) in its extra_data, in rank order."""
+        from sqlalchemy import select
+        from alicecore.db import SourceChunk, get_session_factory
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            chunks = list(
+                (
+                    await session.execute(
+                        select(SourceChunk).where(SourceChunk.id.in_(chunk_ids)).order_by(SourceChunk.rank)
+                    )
+                ).scalars()
+            )
+            starts = chunk_start_lines([chunk.raw_content or chunk.content or "" for chunk in chunks], text)
+            for chunk, line in zip(chunks, starts, strict=True):
+                chunk.extra_data = {**(chunk.extra_data or {}), "line": line}
+            await session.commit()
+        return [chunk.id for chunk in chunks], starts
 
     async def _extract_remaining(
         self,

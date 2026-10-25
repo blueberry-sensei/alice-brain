@@ -30,6 +30,7 @@ from sag_api.enums import SEARCH_STRATEGIES, normalize_search_strategy
 from sag_api.sag.config_builder import build_engine_config
 from sag_api.sag.dto import (
     EntityInfo,
+    EventSnippet,
     GraphAssociationInfo,
     GraphEventInfo,
     ProcessCheckpoint,
@@ -48,6 +49,7 @@ from sag_api.sag.incremental_processor import IncrementalDocumentProcessor
 
 if TYPE_CHECKING:
     from sag_api.db.models import Source
+    from sag_api.sag.document_cleanup import DeletedDocumentRecords, OrphanRecords
 
 log = get_logger("sag")
 
@@ -517,7 +519,7 @@ class EngineManager:
         document_source_id: str,
         *,
         source: Source | None = None,
-    ) -> None:
+    ) -> DeletedDocumentRecords:
         """Delete one document's chunks, events, relations and the derived data of orphaned entities."""
         from sag_api.sag.document_cleanup import delete_document_records
 
@@ -553,6 +555,17 @@ class EngineManager:
             len(deleted.relation_ids),
             len(deleted.entity_ids),
         )
+        return deleted
+
+    async def find_orphans(
+        self, source_config_id: str, live_source_ids: set[str], *, source: Source | None = None
+    ) -> OrphanRecords:
+        """Engine rows of this source that no current document owns (e.g. left by failed old syncs)."""
+        from sag_api.sag.document_cleanup import find_orphan_records
+
+        await self._slot(source_config_id, source)
+        with map_sag_errors():
+            return await find_orphan_records(source_config_id, live_source_ids)
 
     async def process_document(
         self,
@@ -566,6 +579,7 @@ class EngineManager:
         should_pause: PauseCheck | None = None,
         max_concurrency: int | None = None,
         document_title: str | None = None,
+        article_id: str | None = None,
     ) -> ProcessOutcome:
         """Process one document independently; documents of the same source may run in parallel and each finished chunk saves a checkpoint."""
 
@@ -588,11 +602,33 @@ class EngineManager:
                 )
                 return await processor.process(
                     path,
+                    article_id=article_id,
                     checkpoint=checkpoint or ProcessCheckpoint(),
                     on_checkpoint=on_checkpoint or ignore_checkpoint,
                     should_pause=should_pause or never_pause,
                     on_stage=on_stage,
                 )
+
+    async def process_extracted_document(
+        self,
+        source_config_id: str,
+        path: str,
+        events: list[dict],
+        *,
+        article_id: str,
+        source: Source | None = None,
+    ) -> ProcessOutcome:
+        """Chunk, embed and store a document whose events the client extracted; no LLM is called."""
+        with map_sag_errors():
+            async with self.use_concurrently(source_config_id, source) as engine:
+                processor = IncrementalDocumentProcessor(
+                    engine,
+                    source_config_id,
+                    max_concurrency=1,
+                    chunk_max_tokens=self._settings.document_chunk_max_tokens,
+                    chunk_mode=self._settings.document_chunk_mode,
+                )
+                return await processor.process_extracted(path, events, article_id=article_id)
 
     async def _search_raw(
         self,
@@ -1454,6 +1490,56 @@ class EngineManager:
             total_entities=total_entities,
         )
 
+    async def entity_type_names(self, source_config_id: str, *, source: Source | None = None) -> set[str]:
+        """Entity types events of this source may use; the same rule `save_events` applies."""
+        await self._slot(source_config_id, source)
+        from alicecore.modules.extract.extractor import load_stored_entity_types
+
+        return {entity_type.type for entity_type in await load_stored_entity_types(source_config_id)}
+
+    async def find_entity(
+        self,
+        source_config_id: str,
+        name: str,
+        *,
+        source: Source | None = None,
+    ) -> EntityInfo | None:
+        """The entity named exactly ``name`` (case-insensitive), else the busiest one containing it."""
+        await self._slot(source_config_id, source)
+        from sqlalchemy import func, select
+        from alicecore.db import get_session_factory
+        from alicecore.db.models import Entity, EventEntity
+
+        lowered = name.strip().lower()
+        heat = func.count(EventEntity.id)
+        needle = lowered.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        sf = get_session_factory()
+        async with sf() as s:
+            for condition in (
+                Entity.normalized_name == lowered,
+                Entity.normalized_name.like(f"%{needle}%", escape="\\"),
+            ):
+                row = (
+                    await s.execute(
+                        select(Entity, heat.label("heat"))
+                        .outerjoin(EventEntity, EventEntity.entity_id == Entity.id)
+                        .where(Entity.source_config_id == source_config_id, condition)
+                        .group_by(Entity.id)
+                        .order_by(heat.desc())
+                        .limit(1)
+                    )
+                ).first()
+                if row is not None:
+                    entity, count = row
+                    return EntityInfo(
+                        id=entity.id,
+                        name=entity.name or "",
+                        type=entity.type or "",
+                        description=entity.description or "",
+                        heat=int(count or 0),
+                    )
+        return None
+
     async def entity_context(
         self,
         source_config_id: str,
@@ -1461,27 +1547,72 @@ class EngineManager:
         *,
         source: Source | None = None,
         limit: int = 20,
-    ) -> list[str]:
-        """Text snippets of the events related to an entity (used to generate a persona)."""
+    ) -> list[EventSnippet]:
+        """The live events related to an entity, with where each one sits in its document."""
         await self._slot(source_config_id, source)
         from sqlalchemy import select
         from alicecore.db import get_session_factory
         from alicecore.db.models import EventEntity, SourceEvent
 
         stmt = (
-            select(SourceEvent.title, SourceEvent.summary, SourceEvent.content)
+            select(
+                SourceEvent.title,
+                SourceEvent.summary,
+                SourceEvent.content,
+                SourceEvent.article_id,
+                SourceEvent.extra_data,
+            )
             .join(EventEntity, EventEntity.event_id == SourceEvent.id)
-            .where(EventEntity.entity_id == entity_id)
+            .where(EventEntity.entity_id == entity_id, SourceEvent.not_deleted())
+            .order_by(SourceEvent.created_time.desc(), SourceEvent.rank)
             .limit(limit)
         )
         sf = get_session_factory()
-        snippets: list[str] = []
+        snippets: list[EventSnippet] = []
         async with sf() as s:
-            for title, summary, content in (await s.execute(stmt)).all():
+            for title, summary, content, article_id, extra in (await s.execute(stmt)).all():
                 text = summary or content or title
                 if text:
-                    snippets.append(str(text)[:500])
+                    line = (extra or {}).get("line") if isinstance(extra, dict) else None
+                    snippets.append(
+                        EventSnippet(
+                            text=str(text)[:500],
+                            article_id=article_id,
+                            line=line if isinstance(line, int) else None,
+                        )
+                    )
         return snippets
+
+    async def chunk_lines(
+        self,
+        source_config_id: str,
+        chunk_ids: list[str],
+        *,
+        source: Source | None = None,
+    ) -> dict[str, tuple[str, int | None]]:
+        """chunk_id -> (article id, start line inside its document when it was recorded)."""
+        if not chunk_ids:
+            return {}
+        await self._ensure_read_runtime({source_config_id: source})
+        from sqlalchemy import select
+        from alicecore.db import get_session_factory
+        from alicecore.db.models import SourceChunk
+
+        sf = get_session_factory()
+        async with sf() as s:
+            rows = (
+                await s.execute(
+                    select(SourceChunk.id, SourceChunk.source_id, SourceChunk.extra_data).where(
+                        SourceChunk.source_config_id == source_config_id,
+                        SourceChunk.id.in_(list(dict.fromkeys(chunk_ids))),
+                    )
+                )
+            ).all()
+        out: dict[str, tuple[str, int | None]] = {}
+        for chunk_id, article_id, extra in rows:
+            line = extra.get("line") if isinstance(extra, dict) else None
+            out[chunk_id] = (article_id, line if isinstance(line, int) else None)
+        return out
 
     async def universe_overview_stats(
         self,
@@ -2619,21 +2750,27 @@ class EngineManager:
         *,
         source: Source | None = None,
         limit: int = 20,
+        also: tuple[str, ...] = (),
     ) -> list[dict]:
-        """Exact text match (LIKE, case insensitive): a deterministic lookup alongside semantic search."""
+        """Exact text match (LIKE, case insensitive): a deterministic lookup alongside semantic search.
+
+        ``also``: other query terms; chunks containing more of them come first. Chunk rank alone
+        orders nothing across documents (every one-chunk document has rank 0).
+        """
         await self._ensure_read_runtime({source_config_id: source})
-        from sqlalchemy import select
+        from sqlalchemy import case, literal, select
         from alicecore.db import get_session_factory
         from alicecore.db.models import SourceChunk
 
-        needle = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        def like(term: str):
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            return SourceChunk.content.ilike(f"%{escaped}%", escape="\\")
+
+        matched = sum((case((like(term), 1), else_=0) for term in also), literal(0))
         stmt = (
             select(SourceChunk.id, SourceChunk.heading, SourceChunk.content)
-            .where(
-                SourceChunk.source_config_id == source_config_id,
-                SourceChunk.content.ilike(f"%{needle}%", escape="\\"),
-            )
-            .order_by(SourceChunk.rank)
+            .where(SourceChunk.source_config_id == source_config_id, like(pattern))
+            .order_by(matched.desc(), SourceChunk.rank, SourceChunk.id)
             .limit(limit)
         )
         sf = get_session_factory()

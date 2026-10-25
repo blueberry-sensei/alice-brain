@@ -13,6 +13,7 @@ from sag_api.db.models import Document, Job, Source
 from sag_api.enums import DocumentStatus, JobStatus, JobType
 from sag_api.jobs import JobQueue
 from sag_api.sag import EngineManager
+from sag_api.sag.dto import EXTRACTED_EVENTS_KEY
 
 
 async def list_documents(session: AsyncSession, source_id: str) -> list[Document]:
@@ -38,6 +39,10 @@ async def create_document_from_upload(
     data: bytes,
     upload_dir: str,
     job_queue: JobQueue,
+    display_name: str | None = None,
+    origin_path: str | None = None,
+    origin_line: int | None = None,
+    job_payload: dict | None = None,
 ) -> tuple[Document, Job]:
     doc_id = new_id()
     safe_name = os.path.basename(filename) or "upload"
@@ -50,11 +55,13 @@ async def create_document_from_upload(
     document = Document(
         id=doc_id,
         source_id=source.id,
-        filename=safe_name,
+        filename=display_name or safe_name,
         content_type=content_type or "application/octet-stream",
         size_bytes=len(data),
         storage_path=storage_path,
         status=DocumentStatus.PENDING,
+        origin_path=origin_path,
+        origin_line=origin_line,
     )
     session.add(document)
     await session.execute(
@@ -65,6 +72,7 @@ async def create_document_from_upload(
         source_id=source.id,
         document_id=doc_id,
         status=JobStatus.QUEUED,
+        payload=job_payload or {},
     )
     session.add(job)
     await session.commit()
@@ -116,6 +124,59 @@ async def ingest_content(
         job_queue=job_queue,
     )
     return document
+
+
+async def ingest_extracted(
+    session: AsyncSession,
+    source: Source,
+    *,
+    title: str,
+    text: str,
+    origin_path: str,
+    origin_line: int,
+    events: list[dict],
+    upload_dir: str,
+    job_queue: JobQueue,
+) -> Document:
+    """Store text whose events the client already extracted; processing only chunks and embeds it."""
+    document, _job = await create_document_from_upload(
+        session,
+        source,
+        # The title may hold a path and an anchor; the stored copy only needs a parseable name.
+        filename="entry.md",
+        display_name=title,
+        content_type="text/markdown",
+        data=text.encode("utf-8"),
+        upload_dir=upload_dir,
+        job_queue=job_queue,
+        origin_path=origin_path,
+        origin_line=origin_line,
+        job_payload={EXTRACTED_EVENTS_KEY: events},
+    )
+    return document
+
+
+async def update_origins(session: AsyncSession, source: Source, items: list[dict]) -> int:
+    """Move documents to new start lines in their origin file; content and vectors stay as they are."""
+    ids = [item["document_id"] for item in items]
+    documents = {
+        document.id: document
+        for document in (
+            await session.scalars(
+                select(Document).where(Document.source_id == source.id, Document.id.in_(ids))
+            )
+        ).all()
+    }
+    missing = [document_id for document_id in ids if document_id not in documents]
+    if missing:
+        raise NotFoundError(f"Document(s) not in this source: {', '.join(missing[:5])}")
+    for item in items:
+        document = documents[item["document_id"]]
+        if document.origin_path is None:
+            raise ConflictError(f"Document {document.id} has no origin to move")
+        document.origin_line = item["origin_line"]
+    await session.commit()
+    return len(items)
 
 
 async def reprocess_document(
@@ -173,6 +234,9 @@ async def reprocess_document(
         await session.flush()
         await _refresh_source_counts(session, source)
     payload = dict(latest.payload or {}) if latest is not None and not restart_from_scratch else {}
+    if latest is not None and EXTRACTED_EVENTS_KEY in (latest.payload or {}):
+        # The events are part of the document itself: a restart must not fall back to LLM extraction.
+        payload[EXTRACTED_EVENTS_KEY] = latest.payload[EXTRACTED_EVENTS_KEY]
     payload.pop("pause_requested", None)
     payload.pop("resume_requested", None)
     job = Job(

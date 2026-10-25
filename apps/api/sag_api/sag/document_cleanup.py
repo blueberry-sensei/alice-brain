@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import bindparam, delete, exists, or_, select, text
+from sqlalchemy import bindparam, delete, exists, func, or_, select, text
 
 from sag_api.core.logging import get_logger
 
@@ -74,6 +74,7 @@ async def _delete_vector_ids(client: Any, index: str, ids: tuple[str, ...]) -> N
 
 
 async def _delete_vectors(records: DeletedDocumentRecords) -> None:
+    """Delete the vector rows of ``records``; any failure raises."""
     from alicecore.core.storage.client import get_vector_client
 
     client = get_vector_client()
@@ -84,10 +85,7 @@ async def _delete_vectors(records: DeletedDocumentRecords) -> None:
         ("entity_vectors", records.entity_ids),
     )
     for index, ids in groups:
-        try:
-            await _delete_vector_ids(client, index, ids)
-        except Exception as error:  # noqa: BLE001 - relational data remains authoritative
-            log.warning("Cleaning up the vector-derived data failed index=%s count=%d: %s", index, len(ids), error)
+        await _delete_vector_ids(client, index, ids)
 
 
 async def delete_document_records(
@@ -111,12 +109,12 @@ async def delete_document_records(
         article_ids = tuple(
             (
                 await session.scalars(
+                    # The key is the article id only. `Article.source_id` is an optional external
+                    # binding the brain never sets; matching it could remove an article some other
+                    # live document owns.
                     select(Article.id).where(
                         Article.source_config_id == source_config_id,
-                        or_(
-                            Article.id == document_source_id,
-                            Article.source_id == document_source_id,
-                        ),
+                        Article.id == document_source_id,
                     )
                 )
             ).all()
@@ -198,13 +196,55 @@ async def delete_document_records(
                 delete(ArticleSection).where(ArticleSection.article_id.in_(article_ids))
             )
             await session.execute(delete(Article).where(Article.id.in_(article_ids)))
-        await session.commit()
 
-    records = DeletedDocumentRecords(
-        chunk_ids=chunk_ids,
-        event_ids=event_ids,
-        relation_ids=relation_ids,
-        entity_ids=orphan_entity_ids,
-    )
-    await _delete_vectors(records)
+        records = DeletedDocumentRecords(
+            chunk_ids=chunk_ids,
+            event_ids=event_ids,
+            relation_ids=relation_ids,
+            entity_ids=orphan_entity_ids,
+        )
+        # Vectors are deleted before the commit: if the vector store fails, the relational deletes
+        # roll back and the rows still name every id, so a rerun finds and retries them.
+        await _delete_vectors(records)
+        await session.commit()
     return records
+
+
+@dataclass(frozen=True)
+class OrphanRecords:
+    """Engine rows of one source that no current document owns, grouped by owner id."""
+
+    source_ids: tuple[str, ...]
+    articles: int
+    chunks: int
+    events: int
+
+
+async def find_orphan_records(source_config_id: str, live_source_ids: set[str]) -> OrphanRecords:
+    """Count articles, chunks and events whose owner is not a live document's ``sag_source_id``.
+
+    An event's owner is its article id, or its source id when it has no article; these are the
+    same keys `delete_document_records` deletes by.
+    """
+    from alicecore.db import get_session_factory
+    from alicecore.db.models import Article, SourceChunk, SourceEvent
+
+    event_owner = func.coalesce(SourceEvent.article_id, SourceEvent.source_id)
+    grouped = {
+        "articles": select(Article.id, func.count()).where(Article.source_config_id == source_config_id).group_by(Article.id),
+        "chunks": select(SourceChunk.source_id, func.count())
+        .where(SourceChunk.source_config_id == source_config_id)
+        .group_by(SourceChunk.source_id),
+        "events": select(event_owner, func.count())
+        .where(SourceEvent.source_config_id == source_config_id)
+        .group_by(event_owner),
+    }
+    totals = dict.fromkeys(grouped, 0)
+    owners: set[str] = set()
+    async with get_session_factory()() as session:
+        for table, statement in grouped.items():
+            for owner, count in (await session.execute(statement)).all():
+                if owner not in live_source_ids:
+                    owners.add(owner)
+                    totals[table] += count
+    return OrphanRecords(source_ids=tuple(sorted(owners)), **totals)

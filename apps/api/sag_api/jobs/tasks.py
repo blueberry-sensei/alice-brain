@@ -7,6 +7,7 @@ Inside a handler it is up to the code to update the stage state and counters of 
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from sag_api.enums import DocumentStatus, JobType
 from sag_api.jobs.control import JobPaused
 from sag_api.parsing import prepare_document
 from sag_api.sag import EngineManager
-from sag_api.sag.dto import ProcessCheckpoint
+from sag_api.sag.dto import EXTRACTED_EVENTS_KEY, ProcessCheckpoint
 
 log = get_logger("jobs")
 
@@ -90,9 +91,10 @@ async def process_document(
 
     # Ngữ cảnh telemetry: mọi lời gọi LLM/embedding sinh ra bên dưới (kể cả bên trong
     # alicecore) mang theo document/source/job này, nhờ contextvars — không phải truyền tay.
+    extracted_events = (job.payload or {}).get(EXTRACTED_EVENTS_KEY)
     try:
         prepared = None
-        if not checkpoint.chunk_ids:
+        if extracted_events is None and not checkpoint.chunk_ids:
             prepared = await prepare_document(
                 document.storage_path,
                 settings,
@@ -106,17 +108,37 @@ async def process_document(
             source_id=source.id,
             job_id=job.id,
         ):
-            outcome = await engine_manager.process_document(
-                source.sag_source_config_id,
-                str(prepared.path) if prepared is not None else None,
-                source=source,
-                on_stage=on_stage,
-                checkpoint=checkpoint,
-                on_checkpoint=on_checkpoint,
-                should_pause=should_pause,
-                max_concurrency=settings.document_extract_concurrency,
-                document_title=Path(document.filename).stem.strip(),
-            )
+            if extracted_events is not None or not checkpoint.chunk_ids:
+                # A load is about to run. An earlier attempt that died after loading left rows under
+                # its recorded id: remove them, then record the new id before anything is written.
+                if checkpoint.source_id:
+                    await engine_manager.delete_document_data(
+                        source.sag_source_config_id, checkpoint.source_id, source=source
+                    )
+                await on_checkpoint(ProcessCheckpoint(source_id=str(uuid.uuid4())))
+            if extracted_events is not None:
+                # Events came with the document: chunk and embed only, never call an LLM.
+                await on_stage("loading")
+                outcome = await engine_manager.process_extracted_document(
+                    source.sag_source_config_id,
+                    document.storage_path,
+                    extracted_events,
+                    article_id=checkpoint.source_id,
+                    source=source,
+                )
+            else:
+                outcome = await engine_manager.process_document(
+                    source.sag_source_config_id,
+                    str(prepared.path) if prepared is not None else None,
+                    source=source,
+                    on_stage=on_stage,
+                    checkpoint=checkpoint,
+                    on_checkpoint=on_checkpoint,
+                    should_pause=should_pause,
+                    max_concurrency=settings.document_extract_concurrency,
+                    document_title=Path(document.filename).stem.strip(),
+                    article_id=checkpoint.source_id,
+                )
         if outcome.paused:
             document.status = DocumentStatus.PAUSED
             document.error = None
@@ -147,10 +169,16 @@ async def process_document(
         )
     )
     await session.commit()
+    if extracted_events is not None:
+        parser = "extracted"
+    elif prepared is not None:
+        parser = prepared.provider
+    else:
+        parser = "checkpoint"
     log.info(
         "Document processed doc=%s parser=%s cached=%s chunks=%d events=%d tokens=%d",
         document.id,
-        prepared.provider if prepared is not None else "checkpoint",
+        parser,
         prepared.cached if prepared is not None else True,
         outcome.chunk_count,
         outcome.event_count,

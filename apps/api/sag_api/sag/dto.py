@@ -71,6 +71,14 @@ class EntityInfo(BaseModel):
     heat: int = 0  # number of related events (a proxy for frequency x centrality)
 
 
+class EventSnippet(BaseModel):
+    """One event's text and where it sits (article id + line inside its document, when recorded)."""
+
+    text: str
+    article_id: str | None = None
+    line: int | None = None
+
+
 class GraphEventInfo(BaseModel):
     """An event node in the source graph."""
 
@@ -198,6 +206,10 @@ class ProcessOutcome(BaseModel):
                 getattr(extract, "eventless_chunk_ids", []) or []
             ),
         )
+
+
+#: Job payload key holding the events a client extracted itself (no LLM extraction runs).
+EXTRACTED_EVENTS_KEY = "extracted_events"
 
 
 class ProcessCheckpoint(BaseModel):

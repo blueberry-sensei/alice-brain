@@ -26,8 +26,9 @@ class KnowledgeSyncLogRequest(BaseModel):
     actor: str = Field(default="alice-sync", min_length=1, max_length=120)
     source_id: str = Field(min_length=1, max_length=64)
     source_name: str = Field(min_length=1, max_length=200)
-    created: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=200)
-    updated: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=200)
-    deleted: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=200)
+    # One item per synced entry (not per file): a first sync or rebuild sends the whole knowledge base.
+    created: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=20_000)
+    updated: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=20_000)
+    deleted: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=20_000)
     skipped: int = Field(default=0, ge=0)
     rebuild: bool = False
